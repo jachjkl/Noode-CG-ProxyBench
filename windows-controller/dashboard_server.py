@@ -1741,9 +1741,9 @@ def serve(
         from core.proxybench.dashboard import BenchDashboard
         auto_bench = BenchDashboard(state)
         auto_bench.action("auto-start", {})
-    print("Noode-CG 本地可视化面板")
+    print("Noode-CG ProxyBench 真实代理优选窗口")
     print(f"浏览器地址：{url}")
-    print("关闭此窗口只会停止本地监控，不会取消已经提交到 GitHub Actions 的任务。")
+    print("关闭窗口会请求停止并保存断点；可重新打开继续。")
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
