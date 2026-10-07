@@ -162,6 +162,8 @@ class BenchDashboard:
                     ProxyProfile.load(settings["profile"])
                 command = "validate-runtime" if action == "validate" else "auto-cloud"
                 arguments = ["--mode", "continue" if action == "continue-fetch" else "resume"] if action in {"resume", "continue-fetch"} else []
+                atomic_write_json(settings["state_dir"] / "cloud-live.json", {"repository": self.legacy.repository,
+                                  "status": "Preparing", "stage": "检查规则代理内核" if action == "validate" else "正在准备云端任务和规则代理"})
                 log_path = self.root / "logs/proxybench.log"
                 log_path.parent.mkdir(parents=True, exist_ok=True)
                 self.log_handle = log_path.open("ab")
