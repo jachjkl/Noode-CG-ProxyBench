@@ -26,4 +26,6 @@ Cloudflare [documents restrictions on outbound TCP connections to its own IP ran
 
 The real 1/10/100 bandwidth acceptance gate has not passed. Consequently a full formal 20,000+ candidate scan and a real 110-node publication are not complete. The application preserves candidates and previous successful outputs instead of treating this upstream failure as a qualification.
 
-The original repository remains at its verified baseline source commit. The owner's 12 repositories were audited for write collaborators, pending write invitations, and write-enabled deploy keys; no additional account had write access. Only public source and IP metadata are published here. Real profile credentials remain local.
+This implementation writes only to the independent repository. The owner's later README edits in the original repository are preserved. The owner's 12 repositories were audited for write collaborators, pending write invitations, and write-enabled deploy keys; no additional account had write access. Only public source and IP metadata are published here. Real profile credentials remain local.
+
+The [installed personal-package workflow](https://github.com/jachjkl/Noode-CG-ProxyBench/actions/runs/37608093535) also exercised the actual pythonw frontend, console-backed runner commands, owner authentication, cloud discovery, mirrored download, and queue persistence. It retained 21,538 candidates and served 300 records per page. It correctly stopped at the real bandwidth acceptance failure; no 110-node publication was claimed.
