@@ -5,9 +5,14 @@ import hashlib
 import json
 import os
 import shutil
-import subprocess
+import sys
 import zipfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core.proxybench import VERSION
+from scripts.package_sources import SOURCE_OUTPUTS, public_source_files
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -20,7 +25,7 @@ def build(personal: bool = False) -> Path:
     distribution = ROOT / "dist/Noode-CG-ProxyBench-Windows"
     app = distribution / "app"
     app.mkdir(parents=True, exist_ok=True)
-    tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode("utf-8").split("\0")
+    tracked = public_source_files(ROOT)
     for name in tracked:
         if not name or name.startswith(("data/", "output/", "runtime/", "dist/", ".git/")) or ".local." in name:
             continue
@@ -79,7 +84,7 @@ shell.Run command, 0, False
     instructions = "解压到任意本地目录，双击【开始自动优选.vbs】，在窗口点击【开始优选】。\n已内置 Mihomo、Python、GitHub CLI，无需手工安装内核。\n自动匹配代理、启动本机执行器，GitHub 云端获取 IP，本地三网站三轮与旧安装包的小样本网速测试，最终交回云端发布。\n网速沿用旧包参数：一次512 KiB样本、95%正文完整度、默认3 Mbps；没有另加带宽验收关卡。\n两个固定来源每次打开只全量获取一次；后续只补新的10000个边缘IP，整次会话候选不重复。发布前新候选与上次普通100个IP重新实测竞争、日本10个最后追加；不足就继续补测，直到补齐或停止。\n每页显示300个IP，详细测量点击查看。首次运行下载本机执行器。GitHub使用本机jachjkl的登录授权。暂停和停止均保存状态；不足100个普通IP和10个日本IP不覆盖成功结果。\n"
     instructions += "此专用包已内置本机真实代理配置；请仅在自己的电脑使用和保存。\n" if personal else "此公开包不含个人代理配置；可自动读取本机配置。\n"
     (distribution / "运行说明.txt").write_text(instructions, encoding="utf-8")
-    archive_path = ROOT / ("dist/Noode-CG-ProxyBench-专用版-1.0.1.zip" if personal else "dist/Noode-CG-ProxyBench-Windows-1.0.1.zip")
+    archive_path = ROOT / "dist" / f"Noode-CG-ProxyBench-{'专用版' if personal else 'Windows'}-{VERSION}.zip"
     with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         for path in distribution.rglob("*"):
             if not path.is_file():
@@ -89,12 +94,14 @@ shell.Run command, 0, False
             if "__pycache__" in path.parts or ".local." in relative or "/runner/" in relative or relative.startswith(("app/data/", "app/output/")) or "session-" in relative or relative.endswith(".log"):
                 continue
             archive.write(path, "Noode-CG-ProxyBench-Windows/" + relative)
+        for name in sorted(SOURCE_OUTPUTS):
+            source = ROOT / name
+            if name == "output/nodes.txt" or source.is_file():
+                archive.writestr("Noode-CG-ProxyBench-Windows/app/" + name, b"" if name == "output/nodes.txt" else source.read_bytes())
         if personal:
             archive.writestr("Noode-CG-ProxyBench-Windows/app/config/proxy-profile.local.yaml", profile_path.read_bytes())
     return archive_path
 
 
 if __name__ == "__main__":
-    import sys
-    sys.path.insert(0, str(ROOT))
     print(build(personal="--personal" in sys.argv))

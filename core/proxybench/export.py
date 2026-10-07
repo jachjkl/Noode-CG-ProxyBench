@@ -3,7 +3,9 @@ from __future__ import annotations
 import csv
 import gzip
 import io
+import ipaddress
 import json
+import re
 import shutil
 import tempfile
 import zipfile
@@ -19,6 +21,18 @@ PUBLIC_FIELDS = {"ip", "port", "rank", "lane", "jp_hint", "geo_country", "geo_ve
                  "site_success_count", "latency_jitter_ms", "latency_variance", "qualified"}
 ARTIFACTS = ("nodes.txt", "nodes.json", "nodes.csv", "api.json", "ip.zip")
 TRANSACTION_FILES = (*ARTIFACTS, "health.json")
+
+
+def nodes_text(records: list[dict]) -> str:
+    lines = []
+    for record in records:
+        ip = str(ipaddress.IPv4Address(record["ip"]))
+        port = record["port"]
+        country = str(record.get("geo_country") or record.get("country") or "XX").upper()
+        if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535 or not re.fullmatch(r"[A-Z]{2}", country):
+            raise ValueError("输出地址必须为 IPv4:端口#两位国家代码")
+        lines.append(f"{ip}:{port}#{country}")
+    return "\n".join(lines) + ("\n" if lines else "")
 
 
 def gate(records: list[dict]) -> bool:
@@ -46,7 +60,7 @@ def publish(root: Path, records: list[dict], health: dict) -> dict:
     try:
         atomic_write_json(staged / "nodes.json", public)
         atomic_write_json(staged / "api.json", {"project": "Noode-CG-ProxyBench", "count": 110, "nodes": public})
-        atomic_write_text(staged / "nodes.txt", "\n".join(f"{item['ip_port']}#{item['country']}" for item in public) + "\n")
+        atomic_write_text(staged / "nodes.txt", nodes_text(public))
         stream = io.StringIO()
         columns = list(public[0]) + sorted({key for item in public for key in item} - set(public[0]))
         writer = csv.DictWriter(stream, fieldnames=columns, lineterminator="\n")

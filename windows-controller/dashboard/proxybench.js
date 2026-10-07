@@ -38,3 +38,35 @@ $("previousPage").addEventListener("click",()=>{pageNumber=Math.max(1,pageNumber
 $("rulesForm").addEventListener("submit",async event=>{event.preventDefault();const values={speed_concurrency:1};for(const [key] of fields)values[key]=Number(new FormData(event.target).get(key));values.download_bytes*=1048576;try{const response=await post("rules",values);$("ruleFeedback").textContent=response.effective.replace("Batch","批次");}catch(error){$("ruleFeedback").textContent=error.message;}});
 $("autoImport").addEventListener("click",async()=>{try{await post("import-existing",{auto:true});feedback("本机代理已读取，开始优选时自动准备规则代理内核。");}catch(error){feedback(error.message);}});$("importProfile").addEventListener("click",async()=>{try{await post("import",{text:$("profileText").value});$("profileText").value="";feedback("代理配置已保存并检查格式，参数仅保存在本机。");}catch(error){feedback(error.message);}});
 setInterval(()=>fetch("/api/browser-presence",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client:"proxybench",closed:false})}).catch(()=>{}),15000);poll();
+
+// Preserve the original page's decorative particles, card light and click ripples.
+(()=>{
+ const layer=document.getElementById("ambientParticles"),colors=["cyan","green","violet"];
+ if(layer&&!layer.childElementCount)for(let index=0;index<30;index++){
+  const particle=document.createElement("i");particle.className=`ambient-particle ${colors[index%colors.length]}`;
+  for(const [name,value] of Object.entries({x:`${(index*37+11)%100}%`,drift:`${((index*29)%31)-15}vw`,size:`${2+index%4}px`,duration:`${14+(index%8)*2}s`,delay:`${-(index%12)*1.7}s`}))particle.style.setProperty(`--${name}`,value);
+  layer.append(particle);
+ }
+ const observer=new IntersectionObserver(entries=>entries.forEach(entry=>entry.target.classList.toggle("motion-offscreen",!entry.isIntersecting)));
+ const atmosphere=card=>{
+  if(!card||card.querySelector(":scope > .card-atmosphere"))return;
+  const glow=document.createElement("span");glow.className="card-atmosphere";glow.setAttribute("aria-hidden","true");
+  for(let index=0;index<32;index++){
+   const spark=document.createElement("i");
+   for(const [name,value] of Object.entries({px:`${7+(index*31)%86}%`,pd:`${2.8+index%4*.4}s`,pl:`${-index*.31}s`,sway:`${index%2?24:-24}px`}))spark.style.setProperty(`--${name}`,value);
+   glow.append(spark);
+  }card.append(glow);observer.observe(card);
+ };
+ for(const event of ["pointerover","focusin"])document.addEventListener(event,e=>atmosphere(e.target.closest(".panel,.metric-card")));
+ const visibility=()=>document.body.classList.toggle("page-hidden",document.hidden);
+ document.addEventListener("visibilitychange",visibility);visibility();
+ document.addEventListener("pointerdown",event=>{
+  const button=event.target.closest(".button");if(!button||button.disabled)return;
+  const rect=button.getBoundingClientRect(),ripple=document.createElement("span");ripple.className="ripple-ink";
+  ripple.style.left=`${event.clientX-rect.left}px`;ripple.style.top=`${event.clientY-rect.top}px`;button.append(ripple);
+  button.classList.add("button-pressed");setTimeout(()=>button.classList.remove("button-pressed"),460);
+  ripple.addEventListener("animationend",()=>ripple.remove(),{once:true});
+ });
+ const select=()=>document.querySelectorAll("[data-list]").forEach(button=>button.setAttribute("aria-pressed",String(button.classList.contains("primary"))));
+ document.addEventListener("click",event=>{if(event.target.closest("[data-list]"))select();});select();
+})();

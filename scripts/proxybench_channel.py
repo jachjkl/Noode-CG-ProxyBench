@@ -13,11 +13,27 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.io_utils import atomic_write_bytes, atomic_write_json
-from core.proxybench.export import gate
+from core.proxybench.export import ARTIFACTS, gate, nodes_text
 
 HANDOFF = {"data/handoff/proxybench-pool.json.gz", "data/handoff/proxybench-cloud-health.json"}
 RESULTS = {"output/nodes.txt", "output/nodes.json", "output/nodes.csv", "output/api.json", "output/ip.zip",
            "output/health.json", "data/handoff/proxybench-attempted.json.gz"}
+
+
+def validate_result_files(files: dict[str, bytes]) -> None:
+    if "output/health.json" not in files:
+        raise ValueError("缺少发布健康报告")
+    health = json.loads(files["output/health.json"])
+    if health.get("published"):
+        if {f"output/{name}" for name in ARTIFACTS} - files.keys():
+            raise ValueError("发布结果缺少输出文件，必须包含 output/nodes.txt")
+        records = json.loads(files["output/nodes.json"])
+        if not gate(records):
+            raise ValueError("拒绝不满足 100+10+110 的发布结果")
+        if files["output/nodes.txt"] != nodes_text(records).encode("utf-8"):
+            raise ValueError("nodes.txt 必须与优选结果一致，使用 IP:端口#国家代码 格式")
+    elif any(name.startswith("output/") and name != "output/health.json" for name in files):
+        raise ValueError("未通过门槛的结果不能覆盖订阅")
 
 
 def pack(root: Path, kind: str) -> bytes:
@@ -30,13 +46,14 @@ def pack(root: Path, kind: str) -> bytes:
                 raise ValueError("云端发布门槛校验失败")
         else:
             allowed = {"output/health.json", "data/handoff/proxybench-attempted.json.gz"}
+    files = {relative: (root / relative).read_bytes() for relative in sorted(allowed) if (root / relative).is_file()}
+    if kind == "result":
+        validate_result_files(files)
     import io
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as package:
-        for relative in sorted(allowed):
-            source = root / relative
-            if source.is_file():
-                package.writestr(relative, source.read_bytes())
+        for relative, data in files.items():
+            package.writestr(relative, data)
     return stream.getvalue()
 
 
@@ -52,14 +69,7 @@ def unpack(content: bytes, expected: str, root: Path, kind: str) -> None:
         # Validate every member and final gate before writing any repository output.
         files = {name: package.read(name) for name in names}
         if kind == "result":
-            if "output/health.json" not in files:
-                raise ValueError("缺少发布健康报告")
-            health = json.loads(files["output/health.json"])
-            if health.get("published"):
-                if not gate(json.loads(files.get("output/nodes.json", b"[]"))):
-                    raise ValueError("拒绝不满足 100+10+110 的发布结果")
-            elif any(name.startswith("output/") and name != "output/health.json" for name in files):
-                raise ValueError("未通过门槛的结果不能覆盖订阅")
+            validate_result_files(files)
         for name, data in files.items():
             atomic_write_bytes(root / name, data)
 

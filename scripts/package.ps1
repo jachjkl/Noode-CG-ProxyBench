@@ -1,4 +1,8 @@
-﻿param([string]$Destination = "dist/Noode-CG-ProxyBench-1.0.1.zip")
+﻿param([string]$Destination = "")
 $ErrorActionPreference = "Stop"
-& python (Join-Path $PSScriptRoot "package_proxybench.py")
+if ($Destination) {
+    & python (Join-Path $PSScriptRoot "package_proxybench.py") --destination $Destination
+} else {
+    & python (Join-Path $PSScriptRoot "package_proxybench.py")
+}
 if ($LASTEXITCODE -ne 0) { throw "Package failed" }

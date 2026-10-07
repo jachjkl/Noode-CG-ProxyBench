@@ -1,27 +1,36 @@
 from __future__ import annotations
 
-import subprocess
+import argparse
+import sys
 import zipfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core.proxybench import VERSION
+from scripts.package_sources import public_source_files
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def package(destination: Path) -> list[str]:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    files = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode("utf-8").split("\0")
+    files = public_source_files(ROOT)
     included = []
     with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as archive:
         for name in files:
-            if not name or name.startswith(("data/", "output/", "runtime/", "dist/", ".git/")) or ".local." in name:
-                continue
             source = ROOT / name
-            if source.is_file():
+            if name == "output/nodes.txt":
+                archive.writestr("Noode-CG-ProxyBench/" + name, b"")
+                included.append(name)
+            elif source.is_file():
                 archive.write(source, "Noode-CG-ProxyBench/" + name)
                 included.append(name)
     return included
 
 
 if __name__ == "__main__":
-    path = ROOT / "dist/Noode-CG-ProxyBench-1.0.1.zip"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--destination", type=Path)
+    path = parser.parse_args().destination or ROOT / f"dist/Noode-CG-ProxyBench-{VERSION}.zip"
     print(f"Packaged {len(package(path))} files: {path}")

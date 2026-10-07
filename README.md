@@ -44,7 +44,15 @@ The current ordinary shortlist and all previously published ordinary TOP100 node
 
 Publication requires exactly 100 ordinary nodes followed by 10 additional Japanese nodes, with 110 unique IPs. Every publication uses the same ranking policy and retested measurements. Insufficient results preserve the previous successful files and trigger replenishment.
 
-Outputs: `nodes.txt`, `nodes.json`, `nodes.csv`, `api.json`, `ip.zip`, and `health.json`. The text format is `IP:port#country`, with the Japanese append lane occupying the final ten lines.
+Outputs are stored in the repository's `output/` directory: `nodes.txt`, `nodes.json`, `nodes.csv`, `api.json`, `ip.zip`, and `health.json`. [The plain-text IP file](output/nodes.txt) uses one `IP:port#COUNTRY` per line, such as `82.139.242.5:443#DE`, with the Japanese append lane occupying the final ten lines. It starts empty before the first successful publication. Both local packaging and cloud decoding require the complete output set and verify that the text exactly matches the final ranked JSON; missing or inconsistent text cannot overwrite the last successful result.
+
+## Combined maintenance bundle
+
+Run `python scripts/build_delivery_bundle.py` for a public maintenance ZIP, or add `--personal` for the explicitly authorized local profile package. The result is created under this project's `dist/` directory. It combines the Windows EXE and ZIP, cloud source ZIP, directory listing, SHA-256 inventory, repair-workspace preparation script, rebuild script, and an explicit set of Python, wheel, GitHub CLI, and Mihomo build inputs. Runner registration and runtime measurements are excluded.
+
+After extraction, prepare the repair workspace, edit its source, and run the rebuild script. Existing source edits and local profiles are preserved. The embedded Python can rebuild an extracted source tree without requiring a Git checkout. Both cloud and Windows code packages contain these build recipes. Version numbers come from `core/proxybench/__init__.py`.
+
+The original rising background particles, card lighting, button ripples, and fluorescent selected-state animation are preserved in the Chinese Windows interface. Hidden or offscreen decorations pause, and reduced-motion preferences are respected.
 
 ## Validation status
 
@@ -84,4 +92,5 @@ The repository is public for source and candidate mirrors. Only the owner has re
 - [Japanese append selection](docs/JP-SELECTION.md)
 - [Recovery and checkpoints](docs/RECOVERY.md)
 - [Windows packaging](docs/WINDOWS-PACKAGE.md)
+- [Project and maintenance structure](docs/PROJECT-STRUCTURE.md)
 - [Validation evidence](docs/VALIDATION.md)

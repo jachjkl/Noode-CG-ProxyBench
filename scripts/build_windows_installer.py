@@ -4,13 +4,18 @@ from __future__ import annotations
 import argparse
 import os
 import subprocess
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core.proxybench import VERSION
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def build(personal: bool = False) -> Path:
-    filename = "Noode-CG-ProxyBench-专用版-1.0.1" if personal else "Noode-CG-ProxyBench-Windows-1.0.1"
+    filename = f"Noode-CG-ProxyBench-{'专用版' if personal else 'Windows'}-{VERSION}"
     archive = ROOT / "dist" / (filename + ".zip")
     destination = ROOT / "dist" / (filename + ".exe")
     framework = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Microsoft.NET/Framework64/v4.0.30319"

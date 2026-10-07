@@ -9,7 +9,7 @@ import zipfile
 from pathlib import Path
 
 from core.proxybench.controller import Controller, RoutingError
-from core.proxybench.export import gate, publish
+from core.proxybench.export import gate, nodes_text, publish
 from scripts.proxybench_channel import pack, unpack
 
 
@@ -27,6 +27,53 @@ def winners():
 
 
 class PublicationControllerTests(unittest.TestCase):
+    def test_requested_address_format_and_capital_country_code(self):
+        self.assertEqual(nodes_text([{"ip": "82.139.242.5", "port": 443, "geo_country": "de"}]),
+                         "82.139.242.5:443#DE\n")
+
+    def test_complete_local_results_keep_exact_text_and_order_after_cloud_handoff(self):
+        with tempfile.TemporaryDirectory() as directory:
+            local, cloud = Path(directory) / "local", Path(directory) / "cloud"
+            records = winners()
+            records[0].update(ip="82.139.242.5", geo_country="DE")
+            publish(local / "output", records, {})
+            content = pack(local, "result")
+            unpack(content, hashlib.sha256(content).hexdigest(), cloud, "result")
+            lines = (cloud / "output/nodes.txt").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(lines[0], "82.139.242.5:443#DE")
+            self.assertEqual(len(lines), 110)
+            self.assertTrue(all(line.endswith("#JP") for line in lines[-10:]))
+            self.assertEqual((local / "output/nodes.txt").read_bytes(), (cloud / "output/nodes.txt").read_bytes())
+
+    def test_missing_text_cannot_be_packed_as_a_completed_publication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            publish(root / "output", winners(), {})
+            (root / "output/nodes.txt").unlink()
+            with self.assertRaises(ValueError):
+                pack(root, "result")
+
+    def test_cloud_rejects_missing_or_inconsistent_text_before_overwriting_last_good(self):
+        with tempfile.TemporaryDirectory() as directory:
+            local, cloud = Path(directory) / "local", Path(directory) / "cloud"
+            publish(local / "output", winners(), {})
+            publish(cloud / "output", winners(), {})
+            before = (cloud / "output/nodes.txt").read_bytes()
+            good = pack(local, "result")
+            for replacement in (None, b"82.139.242.5:443#DE\n"):
+                stream = io.BytesIO()
+                with zipfile.ZipFile(io.BytesIO(good)) as source, zipfile.ZipFile(stream, "w") as target:
+                    for name in source.namelist():
+                        if name == "output/nodes.txt":
+                            if replacement is not None:
+                                target.writestr(name, replacement)
+                        else:
+                            target.writestr(name, source.read(name))
+                content = stream.getvalue()
+                with self.assertRaises(ValueError):
+                    unpack(content, hashlib.sha256(content).hexdigest(), cloud, "result")
+                self.assertEqual((cloud / "output/nodes.txt").read_bytes(), before)
+
     def test_exact_110_order_unique_jp_gate(self):
         records = winners()
         self.assertTrue(gate(records))
