@@ -1,0 +1,223 @@
+project:
+  name: Noode-CG Local10000-Local300
+  # TLS SNI and HTTP Host. Change this to the domain bound to your edgetunnel Worker.
+  target_domain: jackoyu.dpdns.org
+  user_agent: Noode-CG/local10000-local300
+
+paths:
+  locations: data/locations.json
+  checkpoints: data/checkpoints
+  output: output
+
+rolling:
+  # Save the previous published TOP100 and strictly retest each one once.
+  # Passing old nodes then compete with the already-tested current pool.
+  previous_limit: 100
+  snapshot_path: data/previous-top100.json
+  official_snapshot_path: data/previous-official-ips.txt.gz
+
+sources:
+  local: []
+  # Every valid entry from every link is included. Link entries do not consume
+  # any of the 10,000 official-range slots sampled in each round.
+  remote:
+    - name: zip.cm.edu.kg/all.txt
+      url: https://zip.cm.edu.kg/all.txt
+      required: true
+      min_records: 10000
+      retries: 3
+      retry_delay_seconds: 2
+      timeout_seconds: 30
+      default_port: 443
+    - name: bestcf.pages.dev/lzj
+      url: https://bestcf.pages.dev/lzj/all.txt
+      required: true
+      min_records: 50
+      retries: 3
+      retry_delay_seconds: 2
+      timeout_seconds: 30
+      default_port: 443
+  max_download_bytes: 20971520
+  cloudflare_ranges:
+    enabled: true
+    refresh: true
+    ipv4_url: https://www.cloudflare.com/ips-v4/
+    include_ipv6: false
+    ipv6_url: https://www.cloudflare.com/ips-v6/
+    official_batch_size: 10000
+    ports: [443]
+    # GitHub supplies a different run id/attempt each time. Local runs leave
+    # this empty and use the current nanosecond timestamp.
+    sampling_seed: ${NOODE_RUN_SEED:-}
+
+pipeline:
+  # The cloud only builds the candidate package. All network measurements and
+  # quality gates run on the Windows self-hosted runner.
+  source_priority:
+    - zip.cm.edu.kg/all.txt
+    - bestcf.pages.dev/lzj
+  prefilter_shortlist: 10000
+  maximum_combined_latency_ms: 300
+  maximum_component_latency_ms: 300
+  maximum_jitter_ms: 500
+  # Default only; the local dashboard rule overrides this for ordinary nodes.
+  # JP uses its dedicated TCPing/speed lane and remains exempt.
+  maximum_loss_rate: 0.30
+  # Final total is 300, including the dedicated JP10 lane.
+  current_selection: 300
+  # Download only the best 400 at a time and stop as soon as 290 strict
+  # non-JP addresses plus JP10 are ready.
+  speed_batch_size: 400
+  # Windows local selection processes every cloud candidate. Probe 100
+  # endpoints at a time, then release the completed batch before continuing.
+  local_probe_batch_size: 100
+  # Keep drawing new disjoint official batches until TOP300 is complete.
+  # Thirty rounds cover the available official IPv4 space; runtime and range
+  # exhaustion remain the only safety stops.
+  max_official_rounds: 30
+  max_runtime_seconds: 19800
+  minimum_round_budget_seconds: 600
+  postprocess_reserve_seconds: 1800
+  fail_on_quality_gate: false
+
+  country_minimums:
+    JP: 10
+  # JP nodes are tested once in a dedicated lane and must originate from the
+  # two full link feeds. They skip TLS/HTTPS-TTFB: TCPing is measured three
+  # times, download once, and the best ten different IPs are kept regardless
+  # of the normal pool's 300ms/3Mbps pass thresholds.
+  jp_source_requirement:
+    country: JP
+    count: 10
+    tcp_attempts: 3
+  prefilter_country_reserve: {}
+  speed_country_reserve: {}
+
+  prefilter_tcp:
+    concurrency: 800
+    timeout_seconds: 1.2
+    attempts: 3
+    require_all_attempts: true
+    maximum_average_latency_ms: 1000
+    maximum_jitter_ms: 500
+    stop_on_failure: true
+    stop_when_average_impossible: true
+
+  quality_tcp:
+    concurrency: 300
+    timeout_seconds: 1.0
+    # Run exactly three probes and filter/rank by their arithmetic mean.
+    attempts: 3
+    require_all_attempts: false
+    maximum_average_latency_ms: 300
+    maximum_jitter_ms: 500
+    # Default only; the saved local packet-loss rule overrides this value.
+    # The separate JP lane intentionally does not inherit this gate.
+    maximum_loss_rate: 0.30
+    stop_on_failure: false
+    stop_when_average_impossible: false
+    # Never stop early: the local rule is based on all three measurements.
+    stop_when_loss_impossible: false
+
+  tls:
+    concurrency: 250
+    timeout_seconds: 4.0
+    verify_certificate: true
+    minimum_version: TLSv1.2
+    attempts: 3
+    require_all_attempts: true
+    maximum_average_latency_ms: 300
+    maximum_jitter_ms: 500
+    stop_on_failure: false
+    stop_when_average_impossible: false
+
+  http:
+    concurrency: 200
+    timeout_seconds: 5.0
+    path: /cdn-cgi/trace
+    require_trace_fields: true
+    accepted_statuses: [200]
+    attempts: 3
+    require_all_attempts: true
+    maximum_average_ttfb_ms: 300
+    maximum_jitter_ms: 500
+    stop_on_failure: false
+    stop_when_average_impossible: false
+
+  websocket:
+    # Enable only after setting the exact path used by your Worker.
+    enabled: false
+    path: /
+    concurrency: 100
+    timeout_seconds: 5.0
+
+  speed:
+    enabled: true
+    domain: speed.cloudflare.com
+    # A larger 512 KiB sample and lower concurrency reduce short-burst and
+    # local bandwidth-contention errors. Results below the saved rule fail.
+    path: /__down?bytes=524288
+    bytes_per_test: 524288
+    minimum_completion_ratio: 0.95
+    candidates: 400
+    minimum_mbps: 3.0
+    concurrency: 20
+    timeout_seconds: 8.0
+    maximum_download_seconds: 7.0
+
+  location_filter:
+    require_known_endpoint_country: true
+    require_known_colo_country: true
+    excluded_countries: [CN]
+
+output:
+  top_nodes: 300
+  # A three-round cycle publishes whatever passed after its final round. With
+  # continuous mode disabled, one successful ordinary node may replace one
+  # tail entry immediately. The ordinary pool still keeps at most TOP300.
+  minimum_publish: 50
+  preserve_last_good: true
+  node_label: country
+  write_compatibility_zip: true
+
+handoff:
+  # Each cloud run hands 10,000 unique official addresses to Windows. The first
+  # run of a local session additionally includes both configured links in full.
+  target: 10000
+  max_official_rounds: 1
+  pool_path: data/handoff/cloud-raw10000.json.gz
+  health_path: data/handoff/cloud-health.json
+  # Local successes survive all rounds in the same open dashboard session.
+  accumulator_path: data/handoff/local-qualified.json.gz
+  # Separate current-cycle UI data from the published subscription ranking.
+  live_results_path: data/handoff/local-live-results.json.gz
+  # Current publish-competition winners are displayed in their own UI card.
+  competition_results_path: data/handoff/publish-competition-results.json.gz
+  # Per-candidate local stage/status stream for the dashboard. This is kept
+  # after cleanup so the completed run can still be inspected locally.
+  live_tests_path: data/handoff/local-live-tests.json.gz
+  attempted_path: data/handoff/local-attempted-ips.txt.gz
+  # Soft cap: spread results across locally observed Cloudflare colos when
+  # possible, then relax the cap rather than publish fewer than 300.
+  max_per_colo: 50
+  max_replenishment_rounds: 3
+
+vantage:
+  # A GitHub-hosted runner is only one network vantage point. For genuine
+  # CT/CU/CM measurements, run the same command on self-hosted runners and
+  # merge their data under data/probes/.
+  name: ${NOODE_VANTAGE:-windows-self-hosted-local-network}
+  probe_files: []
+
+network_baseline:
+  # These are whole-run diagnostics from the GitHub runner, not fake
+  # per-candidate proxy tests. Candidate ranking uses TCP/TLS/Worker HTTP.
+  attempts: 3
+  timeout_seconds: 10
+  targets:
+    - name: Google
+      url: https://www.google.com/generate_204
+    - name: Cloudflare
+      url: https://www.cloudflare.com/cdn-cgi/trace
+    - name: GitHub
+      url: https://github.com/

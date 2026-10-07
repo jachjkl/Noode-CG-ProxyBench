@@ -1,0 +1,159 @@
+﻿param(
+    [string]$Repository = "jachjkl/Noode-CG",
+    [string]$Branch = "main",
+    [string]$LocalRoot = "D:\桌面\软件\Noode-CG-Local",
+    [string]$LogPath = "",
+    [switch]$ManagedLog
+)
+
+$ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$OutputEncoding = [Console]::OutputEncoding
+$logDirectory = Join-Path $LocalRoot "logs"
+New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
+$latestLog = Join-Path $logDirectory "manual-last.log"
+$log = if ($LogPath) { [IO.Path]::GetFullPath($LogPath) } else {
+    Join-Path $logDirectory ("run-{0}.log" -f (Get-Date -Format "yyyyMMdd-HHmmss"))
+}
+$notifier = Join-Path $LocalRoot "notify-user.ps1"
+$workflow = "update.yml"
+
+try { $Host.UI.RawUI.WindowTitle = "Noode-CG 手动优选 - 可在任务管理器结束" } catch { }
+
+if (-not $ManagedLog -and -not (Test-Path -LiteralPath $log)) {
+    Set-Content -LiteralPath $log -Value "" -Encoding UTF8
+}
+
+function Sync-LatestLog {
+    if ($ManagedLog) { return }
+    if ([IO.Path]::GetFullPath($log) -ne [IO.Path]::GetFullPath($latestLog)) {
+        Copy-Item -LiteralPath $log -Destination $latestLog -Force
+    }
+}
+
+function Invoke-GhLogged {
+    param([string[]]$Arguments)
+    & $script:gh.Source @Arguments 2>&1 | ForEach-Object {
+        $text = [string]$_
+        Write-Host $text
+        if (-not $ManagedLog) { Add-Content -LiteralPath $log -Value $text -Encoding UTF8 }
+    }
+    return $LASTEXITCODE
+}
+
+function Write-Status {
+    param([string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Gray)
+    $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
+    Write-Host $line -ForegroundColor $Color
+    if (-not $ManagedLog) { $line | Add-Content -LiteralPath $log -Encoding UTF8 }
+}
+
+function Notify {
+    param([string]$Title, [string]$Message, [string]$Level = "Info")
+    if (Test-Path -LiteralPath $notifier) {
+        & $notifier -Title $Title -Message $Message -Level $Level -LocalRoot $LocalRoot | ForEach-Object {
+            Write-Host ([string]$_)
+            if (-not $ManagedLog) { Add-Content -LiteralPath $log -Value ([string]$_) -Encoding UTF8 }
+        }
+    }
+}
+
+function Get-Runs {
+    $output = & $script:gh.Source run list --repo $Repository --workflow $workflow --limit 20 `
+        --json databaseId,status,conclusion,url,createdAt,event 2>&1
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
+        @($output) | ForEach-Object {
+            Write-Host ([string]$_)
+            if (-not $ManagedLog) { Add-Content -LiteralPath $log -Value ([string]$_) -Encoding UTF8 }
+        }
+        throw "无法读取 GitHub Actions 运行列表。"
+    }
+    if (-not $output) { return @() }
+    $parsed = (($output | Out-String) | ConvertFrom-Json)
+    foreach ($run in @($parsed)) {
+        Write-Output $run
+    }
+}
+
+try {
+    Write-Status "Noode-CG 手动控制器已启动。此窗口会显示状态，成功后自动关闭。" Cyan
+    Write-Status "日志文件：$log"
+    $script:gh = Get-Command gh -ErrorAction Stop
+    & $script:gh.Source auth status *> $null
+    if ($LASTEXITCODE -ne 0) { throw "GitHub CLI 尚未登录，请先运行 gh auth login。" }
+    Write-Status "GitHub CLI 登录检查通过。" Green
+
+    $runs = Get-Runs
+    $active = $runs |
+        Where-Object { $_.status -in @("queued", "in_progress", "waiting", "pending") } |
+        Sort-Object createdAt -Descending |
+        Select-Object -First 1
+
+    if ($active) {
+        $runId = [long]$active.databaseId
+        $runUrl = [string]$active.url
+        Write-Status "检测到已有任务正在运行，不重复触发；正在连接运行 #$runId。" Yellow
+    }
+    else {
+        $knownIds = @($runs | ForEach-Object { [long]$_.databaseId })
+        Notify -Title "Noode-CG" -Message "正在请求云端生成10000个官方候选和首次全量链接。"
+        Write-Status "正在触发 GitHub Actions 云端 RAW10000 工作流……" Yellow
+        $triggerCode = Invoke-GhLogged @(
+            "workflow", "run", $workflow, "--repo", $Repository, "--ref", $Branch,
+            "-f", "continuation=false"
+        )
+        if ($triggerCode -ne 0) { throw "云端工作流触发失败。" }
+
+        $deadline = (Get-Date).AddSeconds(60)
+        $newRun = $null
+        do {
+            Start-Sleep -Seconds 2
+            $newRun = Get-Runs |
+                Where-Object { [long]$_.databaseId -notin $knownIds -and $_.event -eq "workflow_dispatch" } |
+                Sort-Object createdAt -Descending |
+                Select-Object -First 1
+        } while (-not $newRun -and (Get-Date) -lt $deadline)
+        if (-not $newRun) { throw "命令已发送，但60秒内没有在 Actions 中找到新任务。" }
+        $runId = [long]$newRun.databaseId
+        $runUrl = [string]$newRun.url
+        Write-Status "云端工作流已成功触发，运行编号 #$runId。" Green
+        Notify -Title "Noode-CG" -Message "云端优选已启动，运行编号 #$runId。"
+    }
+
+    Write-Status "运行页面：$runUrl" Cyan
+    Write-Status "下面持续显示各阶段状态；关闭此窗口不会停止 GitHub Actions。" DarkGray
+    $watchArguments = @("run", "watch", [string]$runId, "--repo", $Repository, "--exit-status")
+    $watchHelp = (& $script:gh.Source run watch --help 2>&1 | Out-String)
+    if ($watchHelp -match "(?m)^\s+--compact\b") {
+        $watchArguments += "--compact"
+        Write-Status "GitHub CLI 支持 compact 状态显示。" DarkGray
+    }
+    else {
+        Write-Status "当前 GitHub CLI 不支持 compact，已自动使用兼容显示模式。" Yellow
+    }
+    $watchCode = Invoke-GhLogged $watchArguments
+    if ($watchCode -ne 0) {
+        Write-Status "任务失败，正在下载详细日志……" Red
+        [void](Invoke-GhLogged @("run", "view", [string]$runId, "--repo", $Repository, "--log-failed"))
+        throw "GitHub Actions 运行失败，请查看上方错误或日志 $log"
+    }
+
+    Write-Status "本轮 GitHub Actions 已成功完成。" Green
+    Write-Status "是否连续补足由本地面板复选框控制；开启时最多连续3轮。" Yellow
+    Notify -Title "Noode-CG" -Message "本轮云端和本地任务已成功完成。"
+    Write-Status "窗口将在5秒后自动关闭。" DarkGray
+    Sync-LatestLog
+    Start-Sleep -Seconds 5
+    exit 0
+}
+catch {
+    $message = $_.Exception.Message
+    Write-Status "启动或运行失败：$message" Red
+    Write-Host ($_ | Out-String)
+    if (-not $ManagedLog) { $_ | Out-String | Add-Content -LiteralPath $log -Encoding UTF8 }
+    Notify -Title "Noode-CG 启动失败" -Message $message -Level "Error"
+    Write-Status "错误窗口会保留；按任意键后关闭。" Yellow
+    Sync-LatestLog
+    exit 1
+}
