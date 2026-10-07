@@ -6,7 +6,7 @@
 
 ## Windows 双击运行
 
-下载 Windows ZIP，解压后双击 **开始自动优选.vbs**，自动打开本机网页窗口。包内带 Python、PyYAML、psutil、GitHub CLI、curl 和 Mihomo。
+双击 Windows EXE，自动解包并打开本机网页窗口；也可下载 ZIP，解压后双击 **开始自动优选.vbs**。包内带 Python、PyYAML、psutil、GitHub CLI、curl 和 Mihomo。
 
 自动读取本机 Clash Party / Clash Verge / Mihomo 中匹配 Worker 的真实协议配置，准备专属于新仓库的 Windows Runner，衔接：
 

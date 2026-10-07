@@ -15,6 +15,10 @@ on:
         description: Resume saved batches without fetching another candidate pool
         type: boolean
         default: false
+      prepare_only:
+        description: Diagnose cloud discovery and disjoint pools without running a local benchmark
+        type: boolean
+        default: false
 permissions: {}
 concurrency:
   group: noode-cg-proxybench
@@ -64,7 +68,7 @@ jobs:
         run: python scripts/proxybench_channel.py encode --kind handoff
   local-select:
     needs: cloud-prepare
-    if: github.repository == 'jachjkl/Noode-CG-ProxyBench' && github.event_name == 'workflow_dispatch' && (github.actor == 'jachjkl' || github.actor == 'github-actions[bot]')
+    if: inputs.prepare_only != true && github.repository == 'jachjkl/Noode-CG-ProxyBench' && github.event_name == 'workflow_dispatch' && (github.actor == 'jachjkl' || github.actor == 'github-actions[bot]')
     runs-on: [self-hosted, windows, x64, noode-cg-proxybench]
     timeout-minutes: 350
     permissions: {}
