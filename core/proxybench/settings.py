@@ -50,11 +50,11 @@ def load_settings(config_path: str | Path) -> dict:
               "state_dir": root / "data/proxy-bench", "runtime_dir": root / "runtime/mihomo",
               "output_dir": root / "output", "rules_path": root / "data/proxybench-rules.json",
               "official_sample_count": int(block.get("official_sample_count", 10000)),
-              "max_cycles": int(block.get("max_cycles", 3)), "sources": block.get("sources", {}),
+              "max_cycles": int(block.get("max_cycles", 0)), "sources": block.get("sources", {}),
               "auto_update": bool(block.get("auto_update", True)),
               "geo_urls": block.get("geo_urls", ["https://ipwho.is/", "https://api.country.is/"]),
               "rules": validate_rules(block.get("rules", {}))}
-    if result["official_sample_count"] < 1 or not 1 <= result["max_cycles"] <= 3:
+    if result["official_sample_count"] < 1 or not 0 <= result["max_cycles"] <= 30:
         raise ValueError("候选规模或补池轮数错误")
     return result
 

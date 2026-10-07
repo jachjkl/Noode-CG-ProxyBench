@@ -1,30 +1,31 @@
-name: ProxyBench real proxy TOP100 + JP10
-run-name: ProxyBench ${{ inputs.session_id || github.run_id }}
+name: 自动获取IP与本地真实代理优选
+run-name: IP自动优选 ${{ inputs.session_id || github.run_id }}
 on:
   workflow_dispatch:
     inputs:
       continuation:
-        description: Continue an unfinished ProxyBench cycle
+        description: 继续未完成的优选会话
         type: boolean
         default: false
       session_id:
-        description: Application session identity (fixed sources only once)
+        description: 软件会话标识（固定链接每次打开只全量获取一次）
         type: string
         default: ''
       reuse_handoff:
-        description: Resume saved batches without fetching another candidate pool
+        description: 恢复保存的批次，不重新获取候选
         type: boolean
         default: false
       prepare_only:
-        description: Diagnose cloud discovery and disjoint pools without running a local benchmark
+        description: 仅诊断云端候选获取，不运行本地测速
         type: boolean
-        default: false
+        default: true
 permissions: {}
 concurrency:
   group: noode-cg-proxybench
   cancel-in-progress: false
 jobs:
   cloud-prepare:
+    name: 云端自动获取候选IP
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -67,6 +68,7 @@ jobs:
       - id: encode
         run: python scripts/proxybench_channel.py encode --kind handoff
   local-select:
+    name: 本地真实代理测速
     needs: cloud-prepare
     if: inputs.prepare_only != true && github.repository == 'jachjkl/Noode-CG-ProxyBench' && github.event_name == 'workflow_dispatch' && (github.actor == 'jachjkl' || github.actor == 'github-actions[bot]')
     runs-on: [self-hosted, windows, x64, noode-cg-proxybench]
@@ -105,6 +107,8 @@ jobs:
           # The authenticated Runner channel remains a checked final fallback when every mirror is unavailable.
           & $env:NOODE_PYTHON scripts/proxybench_channel.py decode --kind handoff --file $file --sha256 '${{ needs.cloud-prepare.outputs.sha256 }}'
           if ($LASTEXITCODE -ne 0) { throw 'Invalid handoff' }
+          & $env:NOODE_PYTHON main.py stage-handoff
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate queue checkpoint failed' }
       - name: Validate Profile and real 1-10-100 path before scanning
         if: steps.pending.outputs.saved != 'true'
         run: |
@@ -129,6 +133,7 @@ jobs:
           & $env:NOODE_PYTHON scripts/proxybench_channel.py encode --kind result --pending runtime/pending-publish
           if ($LASTEXITCODE -ne 0) { throw 'Result channel failed; pending retained' }
   cloud-publish:
+    name: 云端发布最优IP
     needs: local-select
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -157,6 +162,7 @@ jobs:
             git push origin "HEAD:$GITHUB_REF_NAME"
           fi
   local-confirm:
+    name: 本地确认发布完成
     needs: [local-select, cloud-publish]
     if: github.repository == 'jachjkl/Noode-CG-ProxyBench' && github.event_name == 'workflow_dispatch' && (github.actor == 'jachjkl' || github.actor == 'github-actions[bot]')
     runs-on: [self-hosted, windows, x64, noode-cg-proxybench]

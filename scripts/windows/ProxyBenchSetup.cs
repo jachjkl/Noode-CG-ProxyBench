@@ -30,8 +30,8 @@ internal static class ProxyBenchSetup
             window.MaximizeBox = false;
             window.BackColor = Color.FromArgb(25, 29, 37);
             window.Font = new Font("Microsoft YaHei UI", 10);
-            Label title = new Label { Text = "正在准备自动测速窗口", AutoSize = true, ForeColor = Color.White, Location = new Point(25, 25) };
-            Label message = new Label { Text = "内置 Mihomo 内核和运行环境，完成后自动开始。", AutoSize = true, ForeColor = Color.LightGray, Location = new Point(25, 60) };
+            Label title = new Label { Text = "正在准备代理测速窗口", AutoSize = true, ForeColor = Color.White, Location = new Point(25, 25) };
+            Label message = new Label { Text = "已内置代理内核，窗口打开后点击【开始优选】。", AutoSize = true, ForeColor = Color.LightGray, Location = new Point(25, 60) };
             ProgressBar progress = new ProgressBar { Minimum = 0, Maximum = 100, Size = new Size(510, 20), Location = new Point(25, 102) };
             window.Controls.Add(title); window.Controls.Add(message); window.Controls.Add(progress);
             window.Shown += async delegate

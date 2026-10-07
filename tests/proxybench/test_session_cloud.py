@@ -110,7 +110,28 @@ class SessionCloudTests(unittest.TestCase):
             self.assertEqual(len({x.args[0] for x in controller.dispatch.call_args_list}), 1)
             controller.runner.terminate.assert_called_once()
 
-    def test_reopen_unfinished_cycle_reuses_cloud_handoff_then_replenishes(self):
+    def test_default_unlimited_replenishment_continues_past_three_rounds_until_publish(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = self.settings(Path(directory))
+            settings["max_cycles"] = 0
+            settings["profile"].parent.mkdir(parents=True)
+            settings["profile"].touch()
+            settings["output_dir"].mkdir()
+            controller = CloudController(settings)
+            controller.prepare_runner = Mock()
+            controller.dispatch = Mock()
+            watches = []
+            def watch():
+                watches.append(1)
+                (settings["output_dir"] / "health.json").write_text(json.dumps({"published": len(watches) == 4, "needs_more": len(watches) < 4}))
+                return {"conclusion": "success", "url": "https://example.test/run"}
+            controller.watch = watch
+            with patch("core.proxybench.cloud.ProxyProfile.load"):
+                result = controller.run()
+            self.assertTrue(result["published"])
+            self.assertEqual(controller.dispatch.call_count, 4)
+
+    def test_explicit_resume_unfinished_cycle_reuses_cloud_handoff_then_replenishes(self):
         with tempfile.TemporaryDirectory() as directory:
             settings = self.settings(Path(directory))
             store = Store(settings["state_dir"])
@@ -125,8 +146,27 @@ class SessionCloudTests(unittest.TestCase):
             controller.dispatch = Mock()
             controller.watch = Mock(return_value={"conclusion": "success", "url": "https://example.test/run"})
             with patch("core.proxybench.cloud.ProxyProfile.load"):
-                controller.run()
+                controller.run("resume")
             self.assertEqual([x.args for x in controller.dispatch.call_args_list], [("old-session", True), ("old-session", False)])
+
+    def test_start_after_reopening_uses_new_window_session_and_full_fixed_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = self.settings(Path(directory))
+            store = Store(settings["state_dir"])
+            store.state = {"phase": "scan", "cycle": 2, "session_id": "old-session"}
+            store.commit()
+            (settings["state_dir"] / "session.json").write_text(json.dumps({"session_id": "new-window-session"}))
+            settings["profile"].parent.mkdir(parents=True)
+            settings["profile"].touch()
+            settings["output_dir"].mkdir()
+            (settings["output_dir"] / "health.json").write_text(json.dumps({"published": True}))
+            controller = CloudController(settings)
+            controller.prepare_runner = Mock()
+            controller.dispatch = Mock()
+            controller.watch = Mock(return_value={"conclusion": "success", "url": "https://example.test/run"})
+            with patch("core.proxybench.cloud.ProxyProfile.load"):
+                controller.run()
+            controller.dispatch.assert_called_once_with("new-window-session", False)
 
     def test_manual_continue_after_completed_round_dispatches_fresh_same_session(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -184,3 +224,47 @@ class SessionCloudTests(unittest.TestCase):
             self.assertEqual(len(observed["general_results"]), 101)
             self.assertEqual(len(observed["jp_results"]), 10)
             self.assertTrue({x["ip"] for x in incumbents[:100]} <= {x["ip"] for x in observed["general_results"]})
+
+    def test_failed_top200_do_not_block_fresh_candidates_in_next_competition(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = self.settings(Path(directory))
+            settings.update(auto_update=False, geo_urls=[])
+            settings["profile"].parent.mkdir(parents=True)
+            settings["profile"].write_text(f'proxy:\n  type: vless\n  port: 443\n  uuid: {UUID}\n')
+            profile = ProxyProfile.load(settings["profile"])
+            manager = Mock()
+            manager.version = "fixture"
+            manager.health.return_value = {"status": "Stopped"}
+            settings["runtime_dir"].mkdir(parents=True)
+            (settings["runtime_dir"] / "validation.json").write_text(json.dumps({"profile_fingerprint": profile.fingerprint, "batch100_passed": True}))
+            old = [{**x, "source_types": []} for x in pool(200)]
+            pipeline = Pipeline(settings, manager=manager)
+            pipeline.store.state = {"phase": "general_retest", "cycle": 1, "session_id": "session", "run_id": "run",
+                                    "profile_fingerprint": profile.fingerprint, "sources": {"seed": "old", "session_id": "session"},
+                                    "pool": old, "results": {f"{x['ip']}:{x['port']}": {**x, "qualified": True, "proxy_average_latency_ms": 1} for x in old},
+                                    "competition_rules": RULES}
+            pipeline.store.commit()
+            handoff = settings["root"] / "data/handoff/proxybench-pool.json.gz"
+            handoff.parent.mkdir(parents=True)
+            report = {"seed": "old", "session_id": "session", "continuation": True, "cycle": 1}
+            handoff.write_bytes(gzip.compress(json.dumps({"pool": old, "report": report}).encode()))
+            competitions = []
+            def scan(candidates, field, profiles, **kwargs):
+                if field == "general_results":
+                    competitions.append({x["ip"] for x in candidates})
+                results = pipeline.store.state.setdefault(field, {})
+                for x in candidates:
+                    key = f"{x['ip']}:{x['port']}"
+                    if field == "results" and key in results:
+                        continue
+                    fresh = x["ip"].startswith("104.17.2.")
+                    japan = fresh and int(x["ip"].split(".")[-1]) > 100
+                    results[key] = {**x, "key": key, "qualified": fresh, "proxy_average_latency_ms": 190 if japan else 80,
+                                    "geo_verified": True, "geo_country": "JP" if japan else "US", "jp_qualified": japan}
+            pipeline.scan = scan
+            self.assertFalse(pipeline.run(resume=True, handoff=True)["published"])
+            self.assertFalse(any(x["qualified"] for x in pipeline.store.state["results"].values()))
+            fresh = [{**pool(1)[0], "ip": f"104.17.2.{i + 1}", "source_types": []} for i in range(110)]
+            handoff.write_bytes(gzip.compress(json.dumps({"pool": fresh, "report": {**report, "seed": "new", "cycle": 2}}).encode()))
+            self.assertTrue(pipeline.run(resume=True, handoff=True)["published"])
+            self.assertEqual(competitions[-1], {x["ip"] for x in fresh})

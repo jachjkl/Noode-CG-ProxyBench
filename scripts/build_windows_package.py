@@ -70,13 +70,13 @@ python = root & "\\runtime\\python\\pythonw.exe"
 main = root & "\\app\\main.py"
 config = root & "\\app\\config.yaml"
 shell.CurrentDirectory = root & "\\app"
-command = Chr(34) & python & Chr(34) & " -X utf8 " & Chr(34) & main & Chr(34) & " --config " & Chr(34) & config & Chr(34) & " dashboard --auto-start"
+command = Chr(34) & python & Chr(34) & " -X utf8 " & Chr(34) & main & Chr(34) & " --config " & Chr(34) & config & Chr(34) & " dashboard"
 shell.Run command, 0, False
 '''
     (distribution / "开始自动优选.vbs").write_text(vbs, encoding="utf-16")
     (distribution / "Start-ProxyBench.vbs").write_text(vbs, encoding="utf-16")
     (distribution / "开始自动优选.cmd").write_text('@echo off\r\nstart "" wscript.exe "%~dp0Start-ProxyBench.vbs"\r\n', encoding="ascii")
-    instructions = "解压到任意本地目录，双击【开始自动优选.vbs】。\n已内置 Mihomo、Python、GitHub CLI，无需手工安装内核。\n自动匹配代理、启动独立 Runner，GitHub 云端获取 IP，本地三网站三轮与实际 Mbps 测试，最终交回云端发布。\n两个固定来源每次打开只全量获取一次；自动最多三轮，整次会话候选不重复。点击【继续获取 IP】将新候选与旧普通 TOP100 重新实测竞争，JP10 最后追加。\n首次运行下载独立 Runner。GitHub 使用本机 jachjkl 的登录授权。暂停和停止均保存状态；不足 100+JP10 不覆盖成功结果。\n"
+    instructions = "解压到任意本地目录，双击【开始自动优选.vbs】，在窗口点击【开始优选】。\n已内置 Mihomo、Python、GitHub CLI，无需手工安装内核。\n自动匹配代理、启动本机执行器，GitHub 云端获取 IP，本地三网站三轮与实际带宽测试，最终交回云端发布。\n两个固定来源每次打开只全量获取一次；后续只补新的10000个边缘IP，整次会话候选不重复。发布前新候选与上次普通100个IP重新实测竞争、日本10个最后追加；不足就继续补测，直到补齐或停止。\n每页显示300个IP，详细测量点击查看。首次运行下载本机执行器。GitHub使用本机jachjkl的登录授权。暂停和停止均保存状态；不足100个普通IP和10个日本IP不覆盖成功结果。\n"
     instructions += "此专用包已内置本机真实代理配置；请仅在自己的电脑使用和保存。\n" if personal else "此公开包不含个人代理配置；可自动读取本机配置。\n"
     (distribution / "运行说明.txt").write_text(instructions, encoding="utf-8")
     archive_path = ROOT / ("dist/Noode-CG-ProxyBench-专用版-1.0.0.zip" if personal else "dist/Noode-CG-ProxyBench-Windows-1.0.0.zip")

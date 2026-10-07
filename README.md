@@ -8,6 +8,10 @@
 
 双击 Windows EXE，自动解包并打开本机网页窗口；也可下载 ZIP，解压后双击 **开始自动优选.vbs**。包内带 Python、PyYAML、psutil、GitHub CLI、curl 和 Mihomo。
 
+窗口打开后点击 **开始优选**，自动完成云端获取、本地测速、发布前新旧 IP 复测竞争与发布。界面以中文显示；IP 列表每页 300 个，测量明细点击查看。
+
+[查看云端机器人：自动获取IP与本地真实代理优选](https://github.com/jachjkl/Noode-CG-ProxyBench/actions/workflows/proxybench.yml)。GitHub 页面手动运行默认只获取云端候选；软件开始优选会同时启动完整本地实测流程。
+
 自动读取本机 Clash Party / Clash Verge / Mihomo 中匹配 Worker 的真实协议配置，准备专属于新仓库的 Windows Runner，衔接：
 
 **Ubuntu 获取候选 → 多镜像下载与 SHA-256 → Windows 真实代理优选 → Ubuntu 校验发布 → 本地确认 pending。**
@@ -17,12 +21,12 @@
 ## 默认测试规则
 
 - 两个固定链接每次打开的会话只全量读取一次，官方 IPv4 范围每轮额外取 10,000 个唯一候选，JP Supplemental 另计并验证官方范围。
-- 最多三轮自动补测；云端会话历史排除所有已交接 IP，包括尚未实测的候选。断点继续复用同一交接包；继续获取 IP 请求新批次，并与旧普通 TOP100 重新实测竞争，JP10 单独追加。
+- 默认持续自动补测，直到普通 100 个＋日本 10 个通过最终复测，或停止、来源用尽。云端会话历史排除所有已交接 IP，包括尚未实测的候选。继续测试复用断点；继续获取 IP 请求新的 10,000 个边缘 IP，固定链接不会重复获取。
 - 每 Batch 默认 100 个 IP；一个独立 Mihomo Core 一次加载最多 100 个独立 Proxy。
 - Google、Cloudflare、GitHub 三站连续三轮，共九次实际 Proxy Site Probe。
 - 默认平均延迟 <=200ms、请求丢失 0%、三次 2MiB 完整代理下载平均 >=16Mbps（2MB/s）。下载单并发防止带宽竞争和 selector 竞态。
 - Cloudflare 优先 cp.cloudflare.com；预检确认 cp 失败且 trace 可用时，整轮统一使用允许的 www.cloudflare.com/cdn-cgi/trace，实际端点写入记录。
-- General 初选 TOP200、JP 初选 TOP20 统一复测，输出 General100 + 额外唯一 JP10。JP 必须经真实代理出口 Geo 验证。
+- 普通候选前 200 与 GitHub 上次普通 100 个全部复测竞争，统一排序选前 100。日本候选独立复测，额外追加 10 个不同 IP。复测失败即取消该候选合格状态，后续新候选可继续竞争。
 - 发布严格要求 100+10+110 个唯一 IP，不足时保留 Last Good 并继续刷新周期。
 - Dashboard 修改规则下一 Batch 生效。Pause/Stop 保存状态，Resume 继续未完成批次。
 

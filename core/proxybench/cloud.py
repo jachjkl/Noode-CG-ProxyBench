@@ -135,7 +135,7 @@ class CloudController:
         before = datetime.now(UTC).isoformat()[:19]
         self.run_id = None
         self.command(["workflow", "run", "proxybench.yml", "--repo", REPOSITORY, "--ref", "main", "-f",
-                      f"session_id={session_id}", "-f", f"reuse_handoff={str(reuse).lower()}"])
+                      f"session_id={session_id}", "-f", f"reuse_handoff={str(reuse).lower()}", "-f", "prepare_only=false"])
         for _ in range(30):
             self.control.checkpoint()
             runs = self.command(["run", "list", "--repo", REPOSITORY, "--workflow", "proxybench.yml", "--limit", "20",
@@ -181,21 +181,30 @@ class CloudController:
             session = json.loads(session_path.read_text(encoding="utf-8")) if session_path.exists() else {"session_id": secrets.token_hex(16)}
             unfinished = state.get("phase") in {"scan", "general_retest", "jp_retest", "publish"}
             pending = (self.root / "runtime/pending-publish/manifest.json").exists()
-            reuse = (unfinished or pending) and mode != "continue"
+            requested_session = state.get("session_id", session["session_id"]) if mode in {"continue", "resume"} else session["session_id"]
+            reuse = pending or (unfinished and mode == "resume")
+            queued_report_path = self.root / "data/handoff/proxybench-cloud-health.json"
+            if mode == "resume" and not state and queued_report_path.exists():
+                queued_report = json.loads(queued_report_path.read_text(encoding="utf-8"))
+                session["session_id"] = queued_report.get("session_id", session["session_id"])
+                requested_session, reuse = session["session_id"], True
+            resend_before_fresh = pending and mode != "resume"
             if reuse or mode in {"continue", "resume"}:
                 session["session_id"] = state.get("session_id", session["session_id"])
             atomic_write_json(session_path, session)
             budget = self.settings["max_cycles"]
-            if reuse:
+            if reuse and budget:
                 budget = max(1, budget - int(state.get("cycle", 1)) + 1)
-            for attempt in range(budget):
-                self.update(stage="恢复云端交接与已完成批次" if reuse else f"请求云端获取不同 IP（本次 {attempt + 1}/{budget}）", status="Dispatching")
+            attempt = 0
+            while not budget or attempt < budget:
+                attempt += 1
+                self.update(stage="恢复云端交接与已完成批次" if reuse else f"请求云端获取不同 IP（本次第 {attempt} 轮）", status="Dispatching")
                 self.dispatch(session["session_id"], reuse)
                 run = self.watch()
                 if run.get("conclusion") != "success":
                     message = "云端或本地步骤失败，已保留 Last Good 和状态"
                     validation_path = self.settings["runtime_dir"] / "validation.json"
-                    if any(job.get("name") == "local-select" and job.get("conclusion") == "failure" for job in run.get("jobs", [])) and validation_path.exists():
+                    if any(job.get("name") in {"local-select", "本地真实代理测速"} and job.get("conclusion") == "failure" for job in run.get("jobs", [])) and validation_path.exists():
                         validation = json.loads(validation_path.read_text(encoding="utf-8"))
                         if not validation.get("batch100_passed"):
                             message = validation.get("failure_reason", "真实代理带宽验收未通过") + "，已保留候选和 Last Good"
@@ -204,18 +213,23 @@ class CloudController:
                 health_path = self.settings["output_dir"] / "health.json"
                 health = json.loads(health_path.read_text(encoding="utf-8")) if health_path.exists() else {}
                 if health.get("published"):
-                    self.update(stage="100 + JP10 已测量并发布", status="Completed", run_url=run["url"])
+                    if resend_before_fresh:
+                        session["session_id"] = requested_session
+                        atomic_write_json(session_path, session)
+                        resend_before_fresh, reuse, attempt = False, False, 0
+                        continue
+                    self.update(stage="普通100个和日本10个已测量并发布", status="Completed", run_url=run["url"])
                     return {"status": "success", "published": True, "run_url": run["url"]}
                 if not health.get("needs_more"):
                     return {"status": "success", "published": False, "run_url": run["url"]}
                 # Keep this application's Runner alive for all automatic replenishment cycles.
                 reuse = False
-            self.update(stage="三轮补测结束，合格数不足；可点击继续获取 IP", status="Needs More", run_url=run["url"])
+            self.update(stage="已达到自定义补测上限，合格数不足；可点击继续获取 IP", status="Needs More", run_url=run["url"])
             return {"status": "needs_more", "published": False, "run_url": run["url"]}
         except Stopped:
             if self.run_id:
                 self.command(["run", "cancel", str(self.run_id), "--repo", REPOSITORY])
-            self.update(status="Stopped", stage="停止请求已交给本地任务，Checkpoint 保留")
+            self.update(status="Stopped", stage="停止请求已交给本地任务，进度已经保存")
             return {"status": "stopped"}
         except Exception as exc:
             self.update(status="Failed", stage=safe_error(exc))

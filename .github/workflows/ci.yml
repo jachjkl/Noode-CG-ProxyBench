@@ -1,4 +1,4 @@
-name: ProxyBench CI
+name: 代码自动检查
 on: [push, pull_request]
 permissions:
   contents: read

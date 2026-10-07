@@ -1,4 +1,4 @@
-name: Legacy baseline (use ProxyBench workflow)
+name: 旧版流程（已停用）
 on: workflow_dispatch
 permissions: {}
 jobs:

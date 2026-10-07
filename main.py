@@ -20,6 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
     subparsers.add_parser("run", help="运行完整优选流水线")
     subparsers.add_parser("prepare-handoff", help="云端生成 10000 个官方候选并附加首次全量链接")
+    subparsers.add_parser("stage-handoff", help="保存本窗口累积候选列表，验收失败也保留已下载 IP")
     subparsers.add_parser("local-select", help="本地复测交接池和上一轮 TOP100")
     subparsers.add_parser("validate", help="只验证配置")
     subparsers.add_parser("validate-profile", help="验证本机代理 Profile")
@@ -69,6 +70,9 @@ def main(argv: list[str] | None = None) -> int:
         if command == "auto-cloud":
             from core.proxybench.cloud import CloudController
             report = CloudController(settings).run(args.mode)
+        elif command == "stage-handoff":
+            from core.proxybench.queue import accumulate
+            report = accumulate(settings)
         elif command == "prepare-handoff":
             import os
             report = prepare(settings, os.getenv("NOODE_CONTINUATION", "false").lower() == "true",

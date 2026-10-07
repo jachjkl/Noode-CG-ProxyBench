@@ -126,6 +126,11 @@ class Pipeline:
         if handoff:
             path = self.settings["root"] / "data/handoff/proxybench-pool.json.gz"
             payload = json.loads(gzip.decompress(path.read_bytes()))
+            queue_path = self.settings["state_dir"] / "cloud-candidate-queue.json.gz"
+            if queue_path.exists() and not self.store.state.get("pool"):
+                queued = json.loads(gzip.decompress(queue_path.read_bytes()))
+                if queued.get("report", {}).get("session_id") == payload["report"].get("session_id"):
+                    payload = queued
             pool, report = payload["pool"], payload["report"]
             self.incumbents = payload.get("incumbents", [])
             for item in pool:
@@ -202,6 +207,8 @@ class Pipeline:
                     if state["phase"] == "general_retest":
                         general_pool = self.competition_candidates(qualified[:200], state.get("previous_general", []))
                         self.scan(general_pool, "general_results", profiles, fixed_rules=state["competition_rules"])
+                        self.refresh_retests("general_results")
+                        qualified = sorted((x for x in state["results"].values() if x.get("qualified")), key=ranking_key)
                         state["phase"] = "jp_retest"
                         self.store.commit()
                     generals = sorted((x for x in state.get("general_results", {}).values() if x.get("qualified")), key=ranking_key)
@@ -216,10 +223,12 @@ class Pipeline:
                             if len(self.unique_ips(jp_passed)) >= 10:
                                 break
                         state["phase"] = "publish"
+                        self.refresh_retests("jp_results")
                         self.store.commit()
                     japan = self.unique_ips(sorted((x for x in state.get("jp_results", {}).values()
                                                     if x.get("qualified") and x.get("jp_qualified") and x["ip"] not in general_ips), key=ranking_key))[:10]
                     final = [{**item, "lane": "general"} for item in generals] + [{**item, "lane": "jp_append"} for item in japan]
+                    qualified = [x for x in state["results"].values() if x.get("qualified")]
                     report = {**state["sources"], "status": "ok" if len(final) == 110 else "needs_more",
                               "candidate_total": len(state["pool"]), "tested_count": len(state["results"]),
                               "qualified_count": len(qualified), "jp_qualified_count": sum(x.get("jp_qualified", False) for x in qualified),
@@ -230,7 +239,7 @@ class Pipeline:
                     result = publish(self.settings["output_dir"], final, report)
                     atomic_write_bytes(self.settings["root"] / "data/handoff/proxybench-attempted.json.gz",
                                        gzip.compress(json.dumps(sorted({x["ip"] for x in state["pool"]})).encode(), mtime=0))
-                    if result["published"] or state["cycle"] >= self.settings["max_cycles"] or handoff:
+                    if result["published"] or (self.settings["max_cycles"] and state["cycle"] >= self.settings["max_cycles"]) or handoff:
                         state["phase"] = "completed" if result["published"] else "needs_more"
                         self.store.commit()
                         self.update(status=state["phase"], stage=state["phase"])
@@ -260,7 +269,16 @@ class Pipeline:
     @staticmethod
     def competition_candidates(fresh: list[dict], incumbents: list[dict]) -> list[dict]:
         # Incumbents are always admitted to the final competition, even outside the fresh top 200.
-        return Pipeline.unique_ips([Pipeline.candidate(x) for x in [*incumbents, *fresh]])
+        records = Pipeline.unique_ips([Pipeline.candidate(x) for x in [*incumbents, *fresh]])
+        for index, row in enumerate(records, 1):
+            row["proxy_name"] = f"PB-COMP-{index:06d}"
+        return records
+
+    def refresh_retests(self, field: str) -> None:
+        # A failed competition result must not freeze the next round's shortlist with stale passes.
+        for key, result in self.store.state.get(field, {}).items():
+            if key in self.store.state["results"]:
+                self.store.state["results"][key] = copy.deepcopy(result)
 
     def incumbent_candidates(self, profile: ProxyProfile, lane: str) -> list[dict]:
         limit = 100 if lane == "general" else 10
