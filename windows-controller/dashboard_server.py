@@ -105,6 +105,8 @@ class DashboardState:
         self.repository = repository
         self.branch = branch
         self.dashboard_dir = root / "dashboard"
+        if not self.dashboard_dir.exists() and (root / "windows-controller/dashboard").exists():
+            self.dashboard_dir = root / "windows-controller/dashboard"
         self.session_stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         self.log_path = root / "logs" / f"run-{self.session_stamp}.log"
         self.latest_log_path = root / "logs" / "manual-last.log"
@@ -1455,6 +1457,16 @@ def json_bytes(value: object) -> bytes:
 
 
 def make_handler(state: DashboardState, server_ref: dict[str, ThreadingHTTPServer]):
+    bench = None
+    def proxybench():
+        nonlocal bench
+        if bench is None:
+            app = state.root / "app" if (state.root / "app/config.yaml").exists() else state.root
+            sys.path.insert(0, str(app))
+            from core.proxybench.dashboard import BenchDashboard
+            bench = BenchDashboard(state)
+        return bench
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "NoodeCGDashboard/1.0"
 
@@ -1480,6 +1492,12 @@ def make_handler(state: DashboardState, server_ref: dict[str, ThreadingHTTPServe
         def do_GET(self) -> None:
             request = urlsplit(self.path)
             route = request.path
+            if route == "/api/proxybench/state":
+                try:
+                    self._json(proxybench().snapshot())
+                except (ValueError, OSError):
+                    self._json({"error": "无法读取 ProxyBench 配置"}, HTTPStatus.BAD_REQUEST)
+                return
             if route == "/api/state":
                 self._json(state.snapshot())
                 return
@@ -1549,10 +1567,12 @@ def make_handler(state: DashboardState, server_ref: dict[str, ThreadingHTTPServe
                 self._json({"status": "ok"})
                 return
             static_map = {
-                "/": ("index.html", "text/html; charset=utf-8"),
-                "/index.html": ("index.html", "text/html; charset=utf-8"),
+                "/": ("proxybench.html", "text/html; charset=utf-8"),
+                "/index.html": ("proxybench.html", "text/html; charset=utf-8"),
                 "/app.css": ("app.css", "text/css; charset=utf-8"),
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+                "/proxybench.js": ("proxybench.js", "text/javascript; charset=utf-8"),
+                "/proxybench.css": ("proxybench.css", "text/css; charset=utf-8"),
             }
             item = static_map.get(route)
             if not item:
@@ -1566,6 +1586,19 @@ def make_handler(state: DashboardState, server_ref: dict[str, ThreadingHTTPServe
 
         def do_POST(self) -> None:
             route = urlsplit(self.path).path
+            if route.startswith("/api/proxybench/"):
+                host = self.headers.get("Host", "")
+                origin = self.headers.get("Origin", "")
+                if (self.headers.get("X-ProxyBench") != "1" or
+                    (origin and origin != f"http://{host}") or
+                    host.split(":")[0] not in {"127.0.0.1", "localhost"}):
+                    self._json({"error": "拒绝外部页面操作"}, HTTPStatus.FORBIDDEN)
+                    return
+                try:
+                    self._json(proxybench().action(route.rsplit("/", 1)[1], self._read_json()))
+                except (ValueError, OSError, TypeError):
+                    self._json({"error": "操作失败，请检查配置或当前运行状态"}, HTTPStatus.BAD_REQUEST)
+                return
             if route == "/api/start":
                 started = state.start_controller()
                 self._json({"started": started, "state": state.snapshot()})
@@ -1703,7 +1736,11 @@ def serve(
     threading.Thread(target=refresh_auxiliary, args=(state.check_cloud_connection,), daemon=True).start()
     threading.Thread(target=refresh_auxiliary, args=(state.refresh_remote_outputs,), daemon=True).start()
     if auto_start:
-        state.start_controller()
+        app = state.root / "app" if (state.root / "app/config.yaml").exists() else state.root
+        sys.path.insert(0, str(app))
+        from core.proxybench.dashboard import BenchDashboard
+        auto_bench = BenchDashboard(state)
+        auto_bench.action("auto-start", {})
     print("Noode-CG 本地可视化面板")
     print(f"浏览器地址：{url}")
     print("关闭此窗口只会停止本地监控，不会取消已经提交到 GitHub Actions 的任务。")
@@ -1719,6 +1756,13 @@ def serve(
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         process = state.process
+        if getattr(state, "proxybench", None) is not None and process is not None and process.poll() is None:
+            state.proxybench.action("stop", {})
+            try:
+                process.wait(timeout=125)
+            except subprocess.TimeoutExpired:
+                # The task keeps the stop marker and will clean its own core at the next bounded step.
+                process = None
         if process is not None and process.poll() is None:
             try:
                 subprocess.run(
@@ -1741,7 +1785,7 @@ def main() -> int:
     parser.add_argument("--root", default=str(Path(__file__).resolve().parent))
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=13336)
-    parser.add_argument("--repository", default="jachjkl/Noode-CG")
+    parser.add_argument("--repository", default="jachjkl/Noode-CG-ProxyBench")
     parser.add_argument("--branch", default="main")
     parser.add_argument("--start", action="store_true")
     parser.add_argument("--no-start", action="store_true", help=argparse.SUPPRESS)

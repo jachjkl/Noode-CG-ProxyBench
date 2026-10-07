@@ -1,0 +1,173 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import time
+import zipfile
+from datetime import UTC, datetime
+from pathlib import Path
+
+from core.io_utils import atomic_write_json
+
+from .profile import ProxyProfile, discover_profiles, import_discovered, safe_error
+from .state import Control, Stopped
+
+REPOSITORY = "jachjkl/Noode-CG-ProxyBench"
+
+
+class CloudError(ValueError):
+    pass
+
+
+class CloudController:
+    """Owner-authenticated dispatch with a separate, application-owned Windows runner."""
+    def __init__(self, settings: dict) -> None:
+        self.settings = settings
+        self.root = settings["root"]
+        self.runner_root = self.root / "runtime/runner"
+        bundled = self.root / "runtime/gh/bin/gh.exe"
+        self.gh = str(bundled) if bundled.exists() else shutil.which("gh")
+        self.runner = None
+        self.log = None
+        self.run_id = None
+        self.control = Control(settings["state_dir"])
+
+    def update(self, **values) -> None:
+        path = self.settings["state_dir"] / "cloud-live.json"
+        atomic_write_json(path, {"repository": REPOSITORY, **values})
+
+    def command(self, args: list[str], *, timeout: float = 30, as_json: bool = False):
+        if not self.gh:
+            raise CloudError("缺少 GitHub CLI；请使用完整 Windows 运行包")
+        result = subprocess.run([self.gh, *args], capture_output=True, encoding="utf-8", errors="replace", timeout=timeout,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if result.returncode:
+            raise CloudError("GitHub 连接或账户授权失败")
+        return json.loads(result.stdout) if as_json and result.stdout.strip() else result.stdout
+
+    def prepare_runner(self) -> None:
+        if os.name != "nt":
+            raise ValueError("本地自动控制器需要 Windows")
+        actor = self.command(["api", "user", "--jq", ".login"]).strip()
+        if actor != "jachjkl":
+            raise ValueError("请在 GitHub CLI 登录 jachjkl 账户")
+        self.runner_root.mkdir(parents=True, exist_ok=True)
+        executable = self.runner_root / "bin/Runner.Listener.exe"
+        if not executable.exists():
+            self.update(stage="下载独立 Windows Runner", status="Preparing")
+            release = self.command(["api", "repos/actions/runner/releases/latest"], as_json=True)
+            if release.get("prerelease") or release.get("draft"):
+                raise ValueError("拒绝非正式 Runner")
+            asset = next(x for x in release["assets"] if x["name"].startswith("actions-runner-win-x64-") and x["name"].endswith(".zip"))
+            archive = self.runner_root / asset["name"]
+            self.command(["release", "download", release["tag_name"], "--repo", "actions/runner", "--pattern", asset["name"],
+                          "--dir", str(self.runner_root), "--clobber"], timeout=300)
+            if hashlib.sha256(archive.read_bytes()).hexdigest() != asset.get("digest", "").removeprefix("sha256:"):
+                raise ValueError("Runner 官方摘要不匹配")
+            with zipfile.ZipFile(archive) as package:
+                for member in package.infolist():
+                    target = (self.runner_root / member.filename).resolve()
+                    if self.runner_root.resolve() not in target.parents:
+                        raise ValueError("Runner ZIP 路径错误")
+                package.extractall(self.runner_root)
+            archive.unlink()
+        registration = self.runner_root / ".runner"
+        if registration.exists():
+            registered = json.loads(registration.read_text(encoding="utf-8-sig"))
+            if registered.get("gitHubUrl", "").rstrip("/") != f"https://github.com/{REPOSITORY}":
+                raise ValueError("Runner 归属不是新仓库，拒绝修改")
+        else:
+            self.update(stage="为新仓库注册独立本机执行器", status="Preparing")
+            # Token exists only in memory and official Runner credential storage. Never log command arguments.
+            token = self.command(["api", "--method", "POST", f"repos/{REPOSITORY}/actions/runners/registration-token"], as_json=True)["token"]
+            suffix = hashlib.sha256(str(self.root).encode()).hexdigest()[:8]
+            configured = subprocess.run([str(executable), "configure", "--unattended", "--url", f"https://github.com/{REPOSITORY}",
+                                         "--token", token, "--name", f"Noode-ProxyBench-{socket.gethostname()}-{suffix}",
+                                         "--labels", "noode-cg-proxybench", "--work", "_work"],
+                                        cwd=self.runner_root, capture_output=True, timeout=120,
+                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            token = ""
+            if configured.returncode:
+                raise ValueError("独立 Runner 注册失败")
+        log_path = self.root / "runtime/runner-console.log"
+        self.log = log_path.open("wb")
+        env = {**os.environ, "NOODE_PROXYBENCH_APP": str(self.root), "NOODE_PROXYBENCH_PYTHON": sys.executable,
+               "NOODE_LOCAL_ROOT": str(self.root), "PYTHONUTF8": "1"}
+        if self.gh:
+            env["PATH"] = str(Path(self.gh).parent) + os.pathsep + env.get("PATH", "")
+        self.runner = subprocess.Popen([str(executable), "run"], cwd=self.runner_root, env=env, stdout=self.log, stderr=self.log,
+                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        for _ in range(30):
+            if self.runner.poll() is not None:
+                raise ValueError("独立 Runner 启动失败")
+            if "Listening for Jobs" in log_path.read_text(encoding="utf-8", errors="replace")[-10000:]:
+                return
+            self.control.checkpoint()
+            time.sleep(0.5)
+        raise ValueError("独立 Runner 未能连接 GitHub")
+
+    def run(self) -> dict:
+        self.control.path.unlink(missing_ok=True)
+        try:
+            if not self.settings["profile"].exists():
+                references = [x for x in discover_profiles("jackoyu.dpdns.org") if x["matches_worker"] and x["port"] == 443]
+                if not references:
+                    raise CloudError("缺少可用代理协议配置：请在窗口导入现有节点")
+                import_discovered(references[0], self.settings["profile"])
+            ProxyProfile.load(self.settings["profile"])
+            self.prepare_runner()
+            before = datetime.now(UTC).isoformat()
+            self.update(stage="请求云端获取全量 IP", status="Dispatching")
+            # Reopening the application resumes an unfinished cycle instead of clearing its completed batches.
+            pointer = self.settings["state_dir"] / "batch-state.json"
+            continuation = pointer.exists() or (self.root / "runtime/pending-publish/manifest.json").exists()
+            self.command(["workflow", "run", "proxybench.yml", "--repo", REPOSITORY, "--ref", "main", "-f",
+                          f"continuation={str(continuation).lower()}"])
+            for _ in range(30):
+                self.control.checkpoint()
+                runs = self.command(["run", "list", "--repo", REPOSITORY, "--workflow", "proxybench.yml", "--limit", "10",
+                                     "--json", "databaseId,createdAt,event,status"], as_json=True)
+                fresh = [x for x in runs if x["createdAt"] >= before[:19] and x.get("event") == "workflow_dispatch"]
+                if fresh:
+                    self.run_id = fresh[0]["databaseId"]
+                    break
+                time.sleep(1)
+            if not self.run_id:
+                raise ValueError("未找到新云端任务")
+            while True:
+                self.control.checkpoint()
+                run = self.command(["run", "view", str(self.run_id), "--repo", REPOSITORY,
+                                    "--json", "status,conclusion,url,jobs"], as_json=True)
+                current = next((job for job in run.get("jobs", []) if job.get("status") == "in_progress"), {})
+                self.update(stage=current.get("name") or run["status"], status=run["status"], run_id=self.run_id, run_url=run["url"],
+                            jobs=[{"name": job["name"], "status": job["status"], "conclusion": job.get("conclusion")} for job in run.get("jobs", [])])
+                if run["status"] == "completed":
+                    if run.get("conclusion") != "success":
+                        self.update(stage="云端或本地步骤失败，已保留 Last Good 和状态", status="Failed", run_url=run["url"])
+                    return {"status": run.get("conclusion"), "run_url": run["url"]}
+                for _ in range(25):
+                    self.control.checkpoint()
+                    time.sleep(0.2)
+        except Stopped:
+            if self.run_id:
+                self.command(["run", "cancel", str(self.run_id), "--repo", REPOSITORY])
+            self.update(status="Stopped", stage="停止请求已交给本地任务，Checkpoint 保留")
+            return {"status": "stopped"}
+        except Exception as exc:
+            self.update(status="Failed", stage=safe_error(exc))
+            raise
+        finally:
+            if self.runner and self.runner.poll() is None:
+                self.runner.terminate()
+                try:
+                    self.runner.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self.runner.kill()
+                    self.runner.wait(timeout=10)
+            if self.log:
+                self.log.close()

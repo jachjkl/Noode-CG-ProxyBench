@@ -29,7 +29,7 @@ class WindowsLocalControlTests(unittest.TestCase):
         self.assertIn("cors.isteed.cc", downloader)
         self.assertIn("cdn.jsdelivr.net/gh/", downloader)
 
-        workflow = (ROOT / ".github" / "workflows" / "update.yml").read_text(
+        workflow = (ROOT / "docs" / "legacy" / "update.yml").read_text(
             encoding="utf-8"
         )
         self.assertIn("handoff_sha256", workflow)
@@ -38,7 +38,7 @@ class WindowsLocalControlTests(unittest.TestCase):
         self.assertIn("sync-cloud-handoff.ps1", workflow)
 
     def test_windows_job_uses_installed_app_and_bypass_shell(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "update.yml").read_text(
+        workflow = (ROOT / "docs" / "legacy" / "update.yml").read_text(
             encoding="utf-8"
         )
         local_section = workflow.split("  local-select:", 1)[1].split(
@@ -52,7 +52,7 @@ class WindowsLocalControlTests(unittest.TestCase):
         self.assertNotIn("shell: powershell\n", local_section)
 
     def test_windows_job_uses_prepared_runner_python_without_setup_action(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "update.yml").read_text(
+        workflow = (ROOT / "docs" / "legacy" / "update.yml").read_text(
             encoding="utf-8"
         )
         local_section = workflow.split("  local-select:", 1)[1].split(
@@ -72,7 +72,7 @@ class WindowsLocalControlTests(unittest.TestCase):
         self.assertIn("runtime", installer)
 
     def test_windows_powershell_reads_python_json_as_utf8(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "update.yml").read_text(
+        workflow = (ROOT / "docs" / "legacy" / "update.yml").read_text(
             encoding="utf-8"
         )
         utf8_read = (
@@ -86,7 +86,7 @@ class WindowsLocalControlTests(unittest.TestCase):
         )
 
     def test_replenish_dispatch_explicitly_targets_repository_without_checkout(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "update.yml").read_text(
+        workflow = (ROOT / "docs" / "legacy" / "update.yml").read_text(
             encoding="utf-8"
         )
         replenish = workflow.split("  replenish-cloud-pool:", 1)[1]
@@ -95,7 +95,7 @@ class WindowsLocalControlTests(unittest.TestCase):
         self.assertIn("actions: write", replenish)
 
     def test_self_dispatched_replenishment_does_not_cancel_parent_run(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "update.yml").read_text(
+        workflow = (ROOT / "docs" / "legacy" / "update.yml").read_text(
             encoding="utf-8"
         )
         concurrency = workflow.split("concurrency:", 1)[1].split("jobs:", 1)[0]
@@ -103,7 +103,7 @@ class WindowsLocalControlTests(unittest.TestCase):
         self.assertNotIn("cancel-in-progress: true", concurrency)
 
     def test_windows_job_does_not_fetch_or_push_github_directly(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "update.yml").read_text(
+        workflow = (ROOT / "docs" / "legacy" / "update.yml").read_text(
             encoding="utf-8"
         )
         local_section = workflow.split("  local-select:", 1)[1].split(
@@ -124,7 +124,7 @@ class WindowsLocalControlTests(unittest.TestCase):
         self.assertIn("Install-LocalApplication", installer)
 
     def test_cloud_publish_removes_cycle_state_when_no_more_rounds_are_needed(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "update.yml").read_text(
+        workflow = (ROOT / "docs" / "legacy" / "update.yml").read_text(
             encoding="utf-8"
         )
         self.assertIn('.get("needs_more")', workflow)
@@ -135,7 +135,7 @@ class WindowsLocalControlTests(unittest.TestCase):
         )
 
     def test_workflow_supports_publish_only_and_finish_current_round_stop(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "update.yml").read_text(
+        workflow = (ROOT / "docs" / "legacy" / "update.yml").read_text(
             encoding="utf-8"
         )
         self.assertIn("publish_only:", workflow)
@@ -188,7 +188,7 @@ class WindowsLocalControlTests(unittest.TestCase):
         runtime = (ROOT / "scripts" / "local-runtime.ps1").read_text(
             encoding="utf-8-sig"
         )
-        workflow = (ROOT / ".github" / "workflows" / "update.yml").read_text(
+        workflow = (ROOT / "docs" / "legacy" / "update.yml").read_text(
             encoding="utf-8"
         )
         self.assertIn("ToastNotificationManager", watcher)
@@ -207,7 +207,7 @@ class WindowsLocalControlTests(unittest.TestCase):
         installer = (ROOT / "scripts" / "install-windows-controller.ps1").read_text(
             encoding="utf-8-sig"
         )
-        self.assertIn(r"D:\桌面\软件\Noode-CG-Local", installer)
+        self.assertIn(r"D:\桌面\软件\Noode-CG-ProxyBench-Local", installer)
         self.assertIn("Startup", installer)
         self.assertIn("notification-watcher.ps1", installer)
         self.assertIn("manual-start.ps1", installer)

@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$Root = $PSScriptRoot,
     [int]$Port = 13336,
     [switch]$NoStart,
@@ -62,7 +62,7 @@ try {
         $dashboard,
         "--root", $resolvedRoot,
         "--port", $Port,
-        "--repository", "jachjkl/Noode-CG",
+        "--repository", "jachjkl/Noode-CG-ProxyBench",
         "--branch", "main",
         "--no-start"
     )

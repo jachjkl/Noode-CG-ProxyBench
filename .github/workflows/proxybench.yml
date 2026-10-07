@@ -1,0 +1,168 @@
+name: ProxyBench real proxy TOP100 + JP10
+on:
+  workflow_dispatch:
+    inputs:
+      continuation:
+        description: Continue an unfinished ProxyBench cycle
+        type: boolean
+        default: false
+permissions: {}
+concurrency:
+  group: noode-cg-proxybench
+  cancel-in-progress: false
+jobs:
+  cloud-prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    outputs:
+      sha256: ${{ steps.encode.outputs.sha256 }}
+      pool_sha256: ${{ steps.commit.outputs.pool_sha256 }}
+      handoff_ref: ${{ steps.commit.outputs.ref }}
+      payload_0: ${{ steps.encode.outputs.payload_0 }}
+      payload_1: ${{ steps.encode.outputs.payload_1 }}
+      payload_2: ${{ steps.encode.outputs.payload_2 }}
+      payload_3: ${{ steps.encode.outputs.payload_3 }}
+      payload_4: ${{ steps.encode.outputs.payload_4 }}
+      payload_5: ${{ steps.encode.outputs.payload_5 }}
+    env:
+      NOODE_CONTINUATION: ${{ inputs.continuation || 'false' }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - run: python main.py prepare-handoff
+      - name: Commit only public candidate handoff
+        id: commit
+        shell: bash
+        run: |
+          test "$GITHUB_REPOSITORY" = "jachjkl/Noode-CG-ProxyBench"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- data/handoff/proxybench-pool.json.gz data/handoff/proxybench-cloud-health.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(data): fresh full proxy candidate handoff [skip ci]"
+            git push origin "HEAD:$GITHUB_REF_NAME"
+          fi
+          echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "pool_sha256=$(sha256sum data/handoff/proxybench-pool.json.gz | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - id: encode
+        run: python scripts/proxybench_channel.py encode --kind handoff
+  local-select:
+    needs: cloud-prepare
+    if: github.repository == 'jachjkl/Noode-CG-ProxyBench' && github.event_name == 'workflow_dispatch' && (github.actor == 'jachjkl' || github.actor == 'github-actions[bot]')
+    runs-on: [self-hosted, windows, x64, noode-cg-proxybench]
+    timeout-minutes: 350
+    permissions: {}
+    defaults:
+      run:
+        shell: powershell -NoProfile -ExecutionPolicy Bypass -File "{0}"
+    outputs:
+      sha256: ${{ steps.result.outputs.sha256 }}
+      needs_more: ${{ steps.result.outputs.needs_more }}
+      payload_0: ${{ steps.result.outputs.payload_0 }}
+      payload_1: ${{ steps.result.outputs.payload_1 }}
+      payload_2: ${{ steps.result.outputs.payload_2 }}
+      payload_3: ${{ steps.result.outputs.payload_3 }}
+      payload_4: ${{ steps.result.outputs.payload_4 }}
+      payload_5: ${{ steps.result.outputs.payload_5 }}
+    steps:
+      - name: Use independent installed Python and detect pending publish
+        id: pending
+        run: |
+          Set-Location -LiteralPath $env:NOODE_PROXYBENCH_APP
+          $python = $env:NOODE_PROXYBENCH_PYTHON
+          if (-not $python -or -not (Test-Path -LiteralPath $python)) { throw 'Start the ProxyBench Windows application first.' }
+          $utf8 = New-Object Text.UTF8Encoding($false)
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "NOODE_PYTHON=$python`n", $utf8)
+          $pending = Test-Path -LiteralPath 'runtime/pending-publish/manifest.json'
+          [IO.File]::AppendAllText($env:GITHUB_OUTPUT, "saved=$($pending.ToString().ToLowerInvariant())`n", $utf8)
+      - name: Decode digest-verified cloud candidate handoff
+        if: steps.pending.outputs.saved != 'true'
+        run: |
+          Set-Location -LiteralPath $env:NOODE_PROXYBENCH_APP
+          $file = Join-Path $env:RUNNER_TEMP 'proxybench-handoff.b64'
+          [IO.File]::WriteAllText($file, '${{ needs.cloud-prepare.outputs.payload_0 }}${{ needs.cloud-prepare.outputs.payload_1 }}${{ needs.cloud-prepare.outputs.payload_2 }}${{ needs.cloud-prepare.outputs.payload_3 }}${{ needs.cloud-prepare.outputs.payload_4 }}${{ needs.cloud-prepare.outputs.payload_5 }}', [Text.UTF8Encoding]::new($false))
+          & $env:NOODE_PYTHON scripts/sync_cloud_handoff.py --repository jachjkl/Noode-CG-ProxyBench --ref '${{ needs.cloud-prepare.outputs.handoff_ref }}' --relative-path data/handoff/proxybench-pool.json.gz --destination data/handoff/proxybench-pool.json.gz --sha256 '${{ needs.cloud-prepare.outputs.pool_sha256 }}'
+          # The authenticated Runner channel remains a checked final fallback when every mirror is unavailable.
+          & $env:NOODE_PYTHON scripts/proxybench_channel.py decode --kind handoff --file $file --sha256 '${{ needs.cloud-prepare.outputs.sha256 }}'
+          if ($LASTEXITCODE -ne 0) { throw 'Invalid handoff' }
+      - name: Validate Profile and real 1-10-100 path before scanning
+        if: steps.pending.outputs.saved != 'true'
+        run: |
+          Set-Location -LiteralPath $env:NOODE_PROXYBENCH_APP
+          & $env:NOODE_PYTHON main.py validate-profile
+          if ($LASTEXITCODE -ne 0) { throw 'Missing real local proxy Profile' }
+          & $env:NOODE_PYTHON -c "import json;from pathlib import Path;from core.proxybench.profile import ProxyProfile;p=Path('runtime/mihomo/validation.json');v=json.loads(p.read_text(encoding='utf-8')) if p.exists() else {};raise SystemExit(0 if v.get('batch100_passed') and v.get('profile_fingerprint')==ProxyProfile.load(Path('config/proxy-profile.local.yaml')).fingerprint else 1)"
+          if ($LASTEXITCODE -ne 0) {
+            & $env:NOODE_PYTHON main.py validate-runtime
+            if ($LASTEXITCODE -ne 0) { throw 'Real proxy path validation failed' }
+          }
+      - name: Run isolated Mihomo benchmark with checkpoint resume
+        if: steps.pending.outputs.saved != 'true'
+        run: |
+          Set-Location -LiteralPath $env:NOODE_PROXYBENCH_APP
+          & $env:NOODE_PYTHON main.py local-select
+          if ($LASTEXITCODE -ne 0) { throw 'ProxyBench failed; Last Good retained' }
+      - name: Save or resend exact pending result through Runner channel
+        id: result
+        run: |
+          Set-Location -LiteralPath $env:NOODE_PROXYBENCH_APP
+          & $env:NOODE_PYTHON scripts/proxybench_channel.py encode --kind result --pending runtime/pending-publish
+          if ($LASTEXITCODE -ne 0) { throw 'Result channel failed; pending retained' }
+  cloud-publish:
+    needs: local-select
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.ref_name }}
+      - name: Verify result digest, whitelist and 100+10+110 gate
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/result.b64" <<'PROXYBENCH_PAYLOAD'
+          ${{ needs.local-select.outputs.payload_0 }}${{ needs.local-select.outputs.payload_1 }}${{ needs.local-select.outputs.payload_2 }}${{ needs.local-select.outputs.payload_3 }}${{ needs.local-select.outputs.payload_4 }}${{ needs.local-select.outputs.payload_5 }}
+          PROXYBENCH_PAYLOAD
+          python scripts/proxybench_channel.py decode --kind result --file "$RUNNER_TEMP/result.b64" --sha256 '${{ needs.local-select.outputs.sha256 }}'
+      - name: Publish only to the independent repository
+        shell: bash
+        run: |
+          test "$GITHUB_REPOSITORY" = "jachjkl/Noode-CG-ProxyBench"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- output data/handoff/proxybench-attempted.json.gz
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(data): proxy benchmark result [skip ci]"
+            git push origin "HEAD:$GITHUB_REF_NAME"
+          fi
+  local-confirm:
+    needs: [local-select, cloud-publish]
+    if: github.repository == 'jachjkl/Noode-CG-ProxyBench' && github.event_name == 'workflow_dispatch' && (github.actor == 'jachjkl' || github.actor == 'github-actions[bot]')
+    runs-on: [self-hosted, windows, x64, noode-cg-proxybench]
+    permissions: {}
+    defaults:
+      run:
+        shell: powershell -NoProfile -ExecutionPolicy Bypass -File "{0}"
+    steps:
+      - name: Clear only matching pending payload after Ubuntu confirmation
+        run: |
+          Set-Location -LiteralPath $env:NOODE_PROXYBENCH_APP
+          & $env:NOODE_PROXYBENCH_PYTHON scripts/proxybench_channel.py confirm --pending runtime/pending-publish --sha256 '${{ needs.local-select.outputs.sha256 }}'
+          if ($LASTEXITCODE -ne 0) { throw 'Pending confirmation mismatch' }
+  replenish:
+    needs: [local-select, local-confirm]
+    if: needs.local-select.outputs.needs_more == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - run: gh workflow run proxybench.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" -f continuation=true

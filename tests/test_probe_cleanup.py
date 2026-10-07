@@ -7,11 +7,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from core.models import NodeResult
-from core.tls_check import _probe_once
-from core.http_check import _request
-from core.speed_test import test_speed
 from core.handoff import _write_handoff
+from core.http_check import _request
+from core.models import NodeResult
+from core.speed_test import test_speed
+from core.tls_check import _probe_once
 
 
 class ProbeCleanupTests(unittest.IsolatedAsyncioTestCase):

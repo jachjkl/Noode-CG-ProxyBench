@@ -70,7 +70,7 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn("ipv4_fallback", config["sources"]["cloudflare_ranges"])
         self.assertTrue(all("cache_path" not in entry for entry in config["sources"]["remote"]))
 
-        workflow = (Path(__file__).parents[1] / ".github" / "workflows" / "update.yml").read_text(encoding="utf-8")
+        workflow = (Path(__file__).parents[1] / "docs" / "legacy" / "update.yml").read_text(encoding="utf-8")
         self.assertIn("NOODE_RUN_SEED", workflow)
         self.assertIn("github.run_attempt", workflow)
         self.assertIn("timeout-minutes: 240", workflow)

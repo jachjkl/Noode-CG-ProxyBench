@@ -5,7 +5,7 @@
     [string]$RepoRoot = $(Resolve-Path (Join-Path $PSScriptRoot "..")),
     [string]$LocalRoot = $(
         if ($env:NOODE_LOCAL_ROOT) { $env:NOODE_LOCAL_ROOT }
-        else { "D:\桌面\软件\Noode-CG-Local" }
+        else { "D:\桌面\软件\Noode-CG-ProxyBench-Local" }
     )
 )
 

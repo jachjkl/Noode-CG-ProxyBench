@@ -1,5 +1,5 @@
 ﻿param(
-    [string]$InstallRoot = "D:\桌面\软件\Noode-CG-Local"
+    [string]$InstallRoot = "D:\桌面\软件\Noode-CG-ProxyBench-Local"
 )
 
 $ErrorActionPreference = "Stop"
@@ -181,7 +181,7 @@ Install-LocalApplication
 Prepare-RunnerPython
 
 $startup = [Environment]::GetFolderPath("Startup")
-$vbsPath = Join-Path $startup "Noode-CG-Notifier.vbs"
+$vbsPath = Join-Path $startup "Noode-CG-ProxyBench-Notifier.vbs"
 $watcher = Join-Path $InstallRoot "notification-watcher.ps1"
 $oldManual = Join-Path $InstallRoot "开始云端和本地优选.ps1"
 if (Test-Path -LiteralPath $oldManual) {

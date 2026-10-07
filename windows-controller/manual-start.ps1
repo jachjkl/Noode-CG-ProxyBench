@@ -1,7 +1,7 @@
 ﻿param(
-    [string]$Repository = "jachjkl/Noode-CG",
+    [string]$Repository = "jachjkl/Noode-CG-ProxyBench",
     [string]$Branch = "main",
-    [string]$LocalRoot = "D:\桌面\软件\Noode-CG-Local",
+    [string]$LocalRoot = "D:\桌面\软件\Noode-CG-ProxyBench-Local",
     [string]$LogPath = "",
     [switch]$ManagedLog
 )
@@ -16,7 +16,7 @@ $log = if ($LogPath) { [IO.Path]::GetFullPath($LogPath) } else {
     Join-Path $logDirectory ("run-{0}.log" -f (Get-Date -Format "yyyyMMdd-HHmmss"))
 }
 $notifier = Join-Path $LocalRoot "notify-user.ps1"
-$workflow = "update.yml"
+$workflow = "proxybench.yml"
 
 try { $Host.UI.RawUI.WindowTitle = "Noode-CG 手动优选 - 可在任务管理器结束" } catch { }
 

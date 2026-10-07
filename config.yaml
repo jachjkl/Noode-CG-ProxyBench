@@ -1,3 +1,18 @@
+proxybench:
+  profile_path: config/proxy-profile.local.yaml
+  official_sample_count: 10000
+  max_cycles: 30
+  auto_update: true
+  sources:
+    jp_supplemental:
+      - name: gslege-jp-hint
+        url: https://raw.githubusercontent.com/gslege/CloudflareIP/main/JP.txt
+        enabled: true
+        cache_max_age_seconds: 86400
+  geo_urls:
+    - https://ipwho.is/
+    - https://api.country.is/
+
 project:
   name: Noode-CG Local10000-Local300
   # TLS SNI and HTTP Host. Change this to the domain bound to your edgetunnel Worker.

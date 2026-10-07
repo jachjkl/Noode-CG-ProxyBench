@@ -1,0 +1,292 @@
+from __future__ import annotations
+
+import copy
+import gzip
+import json
+import math
+import secrets
+
+import yaml
+
+from core.io_utils import atomic_write_bytes, atomic_write_json
+from sources.common import merge
+from sources.pool import build
+
+from .benchmark import Benchmark, ranking_key
+from .controller import CoreError
+from .export import publish, recover
+from .mihomo_manager import MihomoManager
+from .profile import ProxyProfile, safe_error
+from .settings import current_rules
+from .state import Control, RunLock, Stopped, Store
+
+
+def prepare(settings: dict, continuation: bool = False) -> dict:
+    excluded = set()
+    prior_path = settings["root"] / "data/handoff/proxybench-attempted.json.gz"
+    if continuation and prior_path.exists():
+        excluded = set(json.loads(gzip.decompress(prior_path.read_bytes())))
+    # Cloud does not need or receive the local Profile. The local stage normalizes port from the Profile.
+    pool, report = build(settings, 443, excluded)
+    report["continuation"] = continuation
+    destination = settings["root"] / "data/handoff/proxybench-pool.json.gz"
+    atomic_write_bytes(destination, gzip.compress(json.dumps({"schema": 1, "pool": pool, "report": report}).encode(), mtime=0))
+    atomic_write_json(destination.with_name("proxybench-cloud-health.json"), report)
+    return report
+
+
+class Pipeline:
+    def __init__(self, settings: dict, manager=None, pool_builder=build) -> None:
+        self.settings = settings
+        self.store = Store(settings["state_dir"])
+        self.manager = manager or MihomoManager(settings["runtime_dir"])
+        self.pool_builder = pool_builder
+        self.control = Control(settings["state_dir"], self.update)
+        self.status = {}
+        self.cloudflare_url = "https://cp.cloudflare.com/"
+
+    def update(self, **values) -> None:
+        self.status.update(values)
+        self.status["mihomo"] = self.manager.health()
+        state = self.store.state
+        self.status.update(candidate_total=len(state.get("pool", [])), tested_count=len(state.get("results", {})),
+                           qualified_count=sum(x.get("qualified", False) for x in state.get("results", {}).values()),
+                           phase=state.get("phase", ""), cycle=state.get("cycle", 1), sources=state.get("sources", {}))
+        try:
+            atomic_write_json(self.settings["state_dir"] / "live.json", self.status)
+        except OSError:
+            pass  # UI is best effort; checkpoint commits remain strict.
+
+    def profiles(self, pool: list[dict], default: ProxyProfile) -> dict:
+        profiles = {"default": default}
+        for item in pool:
+            if "profile_file" in item:
+                path = (self.settings["root"] / item["profile_file"]).resolve()
+                if self.settings["root"].resolve() not in path.parents or not path.name.endswith(".local.yaml"):
+                    raise ValueError("授权 Profile 必须在本项目本机配置目录")
+                profiles[item["profile_file"]] = ProxyProfile.load(path)
+                if profiles[item["profile_file"]].port != item["port"]:
+                    raise ValueError("授权代理端口与 Profile 不一致")
+        return profiles
+
+    def scan(self, candidates: list[dict], result_field: str, profiles: dict, *, fixed_rules: dict | None = None) -> None:
+        state = self.store.state
+        state.setdefault(result_field, {}).update(self.store.partial)
+        remaining = [item for item in candidates if f"{item['ip']}:{item['port']}" not in state[result_field]]
+        batch_number = 0
+        while remaining:
+            self.control.checkpoint()
+            rules = fixed_rules or current_rules(self.settings)
+            batch = remaining[:rules["batch_size"]]
+            remaining = remaining[rules["batch_size"]:]
+            batch_number += 1
+            self.update(batch_current=batch_number, batch_total=math.ceil(len(candidates) / rules["batch_size"]),
+                        batch_completed=len(state[result_field]) // rules["batch_size"], stage="Loading Proxy", active_rules=rules)
+            for attempt in range(3):
+                try:
+                    batch = [item for item in batch if f"{item['ip']}:{item['port']}" not in state[result_field]]
+                    if not batch:
+                        break
+                    benchmark = Benchmark(self.manager, rules, self.control, geo_urls=self.settings["geo_urls"], update=self.update,
+                                          cloudflare_url=self.cloudflare_url)
+                    def completed(result):
+                        state[result_field][result["key"]] = result
+                        self.store.save_partial(result)
+                    benchmark.batch(batch, profiles, completed)
+                    break
+                except CoreError:
+                    self.manager.stop()
+                    self.store.commit()
+                    self.update(stage="Core Error: restarting unfinished candidates")
+                    if attempt == 2:
+                        raise
+            self.store.commit()
+            self.update(batch_completed=batch_number)
+
+    def new_pool(self, profile: ProxyProfile, handoff: bool) -> tuple[list[dict], dict]:
+        if handoff:
+            path = self.settings["root"] / "data/handoff/proxybench-pool.json.gz"
+            payload = json.loads(gzip.decompress(path.read_bytes()))
+            pool, report = payload["pool"], payload["report"]
+            for item in pool:
+                if "authorized_proxy_candidate" not in item["source_types"]:
+                    item["port"] = profile.port
+            pool = merge(pool)
+        else:
+            pool, report = self.pool_builder(self.settings, profile.port,
+                                            {item["ip"] for item in self.store.state.get("pool", [])})
+        # Proxy names remain unique across replenishment cycles.
+        for index, item in enumerate(pool, len(self.store.state.get("pool", [])) + 1):
+            item["proxy_name"] = f"PB-{index:06d}"
+        return pool, report
+
+    def run(self, resume: bool = False, handoff: bool = False) -> dict:
+        profile = ProxyProfile.load(self.settings["profile"])
+        with RunLock(self.settings["runtime_dir"]):
+            recover(self.settings["output_dir"])
+            state = self.store.load() if resume else {}
+            if state and handoff:
+                channel = self.settings["root"] / "data/handoff/proxybench-pool.json.gz"
+                handoff_report = json.loads(gzip.decompress(channel.read_bytes()))["report"]
+                if not handoff_report.get("continuation") and handoff_report.get("seed") != state.get("sources", {}).get("seed"):
+                    state = {}
+            if state and state.get("profile_fingerprint") != profile.fingerprint:
+                raise ValueError("Profile 已更改，不能混用旧测量；请开始新一轮")
+            self.control.path.unlink(missing_ok=True)
+            self.store.state = state
+            try:
+                self.manager.ensure(self.settings["auto_update"])
+                validation_path = self.settings["runtime_dir"] / "validation.json"
+                validation = json.loads(validation_path.read_text()) if validation_path.exists() else {}
+                if validation.get("profile_fingerprint") != profile.fingerprint or not validation.get("batch100_passed"):
+                    self.update(status="Validation Required", stage="请先完成 1 → 10 → 100 个真实节点验收")
+                    return {"status": "validation_required", "published": False}
+                self.cloudflare_url = validation.get("cloudflare_url", "https://cp.cloudflare.com/")
+                if not state:
+                    pool, source_report = self.new_pool(profile, handoff)
+                    state = {"run_id": secrets.token_hex(16), "pool": pool, "results": {}, "sources": source_report,
+                             "phase": "scan", "cycle": 1, "profile_fingerprint": profile.fingerprint,
+                             "mihomo_version": self.manager.version}
+                    self.store.state = state
+                    self.store.commit()
+                elif state["phase"] == "completed":
+                    return json.loads((self.settings["output_dir"] / "health.json").read_text(encoding="utf-8"))
+                elif state["phase"] == "needs_more":
+                    fresh, source_report = self.new_pool(profile, handoff)
+                    previous = {f"{item['ip']}:{item['port']}" for item in state["pool"]}
+                    state["pool"].extend(item for item in fresh if f"{item['ip']}:{item['port']}" not in previous)
+                    state.update(phase="scan", cycle=state["cycle"] + 1, sources=source_report, general_results={}, jp_results={})
+                    self.store.commit()
+                while True:
+                    profiles = self.profiles(state["pool"], profile)
+                    if state["phase"] == "scan":
+                        self.scan(state["pool"], "results", profiles)
+                        state["phase"] = "general_retest"
+                        state["competition_rules"] = current_rules(self.settings)
+                        self.store.commit()
+                    qualified = sorted((x for x in state["results"].values() if x.get("qualified")), key=ranking_key)
+                    if state["phase"] == "general_retest":
+                        general_pool = [self.candidate(x) for x in qualified[:200]]
+                        self.scan(general_pool, "general_results", profiles, fixed_rules=state["competition_rules"])
+                        state["phase"] = "jp_retest"
+                        self.store.commit()
+                    generals = sorted((x for x in state.get("general_results", {}).values() if x.get("qualified")), key=ranking_key)
+                    generals = self.unique_ips(generals)[:100]
+                    general_ips = {item["ip"] for item in generals}
+                    if state["phase"] == "jp_retest":
+                        jp_pool = [self.candidate(x) for x in qualified if x.get("jp_qualified") and x["ip"] not in general_ips]
+                        for offset in range(0, len(jp_pool), 20):
+                            self.scan(jp_pool[offset:offset + 20], "jp_results", profiles, fixed_rules=state["competition_rules"])
+                            jp_passed = [x for x in state.get("jp_results", {}).values() if x.get("qualified") and x.get("jp_qualified")]
+                            if len(self.unique_ips(jp_passed)) >= 10:
+                                break
+                        state["phase"] = "publish"
+                        self.store.commit()
+                    japan = self.unique_ips(sorted((x for x in state.get("jp_results", {}).values()
+                                                    if x.get("qualified") and x.get("jp_qualified") and x["ip"] not in general_ips), key=ranking_key))[:10]
+                    final = [{**item, "lane": "general"} for item in generals] + [{**item, "lane": "jp_append"} for item in japan]
+                    report = {**state["sources"], "status": "ok" if len(final) == 110 else "needs_more",
+                              "candidate_total": len(state["pool"]), "tested_count": len(state["results"]),
+                              "qualified_count": len(qualified), "jp_qualified_count": sum(x.get("jp_qualified", False) for x in qualified),
+                              "mihomo_version": self.manager.version, "batch_total": math.ceil(len(state["pool"]) / 100),
+                              "batch_completed": math.ceil(len(state["results"]) / 100), "run_id": state["run_id"], "cycle": state["cycle"]}
+                    result = publish(self.settings["output_dir"], final, report)
+                    atomic_write_bytes(self.settings["root"] / "data/handoff/proxybench-attempted.json.gz",
+                                       gzip.compress(json.dumps(sorted({x["ip"] for x in state["results"].values()})).encode(), mtime=0))
+                    if result["published"] or state["cycle"] >= self.settings["max_cycles"] or handoff:
+                        state["phase"] = "completed" if result["published"] else "needs_more"
+                        self.store.commit()
+                        self.update(status=state["phase"], stage=state["phase"])
+                        return result
+                    self.control.checkpoint()
+                    fresh, source_report = self.new_pool(profile, False)
+                    previous = {f"{item['ip']}:{item['port']}" for item in state["pool"]}
+                    state["pool"].extend(item for item in fresh if f"{item['ip']}:{item['port']}" not in previous)
+                    state.update(cycle=state["cycle"] + 1, phase="scan", sources=source_report, general_results={}, jp_results={})
+                    self.store.commit()
+            except Stopped:
+                self.store.commit()
+                self.update(status="Stopped", stage="状态已保存，可继续")
+                return {"status": "stopped", "published": False}
+            except Exception as exc:
+                if self.store.state:
+                    self.store.commit()
+                self.update(status="Failed", stage=safe_error(exc))
+                publish(self.settings["output_dir"], [], {"status": "failed", "error_category": safe_error(exc),
+                        "last_good_preserved": (self.settings["output_dir"] / "nodes.json").exists()})
+                raise
+            finally:
+                self.manager.benchmark_active = False
+                self.manager.stop()
+                self.update(mihomo=self.manager.health())
+
+    @staticmethod
+    def candidate(result: dict) -> dict:
+        fields = {"ip", "port", "proxy_name", "source_names", "source_types", "source_priority", "jp_hint", "first_seen", "last_seen", "profile_file"}
+        return {key: copy.deepcopy(value) for key, value in result.items() if key in fields}
+
+    @staticmethod
+    def unique_ips(records: list[dict]) -> list[dict]:
+        seen = set()
+        return [item for item in records if item["ip"] not in seen and not seen.add(item["ip"])]
+
+    def validate_runtime(self) -> dict:
+        profile = ProxyProfile.load(self.settings["profile"])
+        payload = yaml.safe_load(self.settings["profile"].read_text(encoding="utf-8-sig"))
+        ips = payload.get("validation_servers", [])
+        import ipaddress
+
+        from sources.cloudflare_official import collect
+        self.update(stage="准备小规模官方验收候选", status="Running")
+        pool, networks = collect(100, profile.port, secrets.token_hex(16), set(ips))
+        ips = [ip for ip in ips if any(ipaddress.IPv4Address(ip) in network for network in networks)]
+        ips = list(dict.fromkeys([*ips, *(item["ip"] for item in pool)]))
+        rules = current_rules(self.settings)
+        # Diagnostic validation has explicit thresholds. Production rules are never modified.
+        validation_rules = {**rules, "max_proxy_average_latency_ms": 10000.0, "min_proxy_speed_mbps": 0.01}
+        self.store.state = {"run_id": secrets.token_hex(16), "phase": "validation"}
+        report = {"profile_fingerprint": profile.fingerprint, "batch100_passed": False, "steps": [],
+                  "method": "real isolated Mihomo; diagnostic thresholds", "validation_rules": validation_rules}
+        with RunLock(self.settings["runtime_dir"]):
+            self.control.path.unlink(missing_ok=True)
+            try:
+                self.manager.ensure(self.settings["auto_update"])
+                for count in (1, 10, 100):
+                    candidates = [{"ip": ip, "port": profile.port, "proxy_name": f"PB-{index:06d}",
+                                   "source_names": ["local-profile-validation"], "source_types": ["cloudflare_edge_candidate"],
+                                   "source_priority": 0, "jp_hint": False} for index, ip in enumerate(ips[:count], 1)]
+                    self.update(stage=f"真实代理验收 {count} Candidate", status="Running")
+                    if count == 1:
+                        self.manager.load_batch(candidates, profile)
+                        primary = self.manager.controller.delay(candidates[0]["proxy_name"], "https://cp.cloudflare.com/", "200-399", rules["request_timeout_seconds"])
+                        report["cloudflare_primary_preflight"] = primary["success"]
+                        if not primary["success"]:
+                            trace_url = "https://www.cloudflare.com/cdn-cgi/trace"
+                            trace = self.manager.controller.delay(candidates[0]["proxy_name"], trace_url, "200", rules["request_timeout_seconds"])
+                            report["cloudflare_trace_preflight"] = trace["success"]
+                            if trace["success"]:
+                                self.cloudflare_url = trace_url
+                        report["cloudflare_url"] = self.cloudflare_url
+                    benchmark = Benchmark(self.manager, validation_rules, self.control, geo_urls=self.settings["geo_urls"], update=self.update,
+                                          cloudflare_url=self.cloudflare_url)
+                    results = benchmark.batch(candidates, profile)
+                    successes = [x for x in results if x["proxy_loss_percent"] == 0 and x.get("qualified")]
+                    passed = len(results) == count and bool(successes) and all(len(x["probes"][site]) == rules["round_count"] for x in results for site in ("google", "cloudflare", "github"))
+                    step = {"candidate_count": count, "independent_results": len(results), "passed": passed,
+                            "site_probe_count": count * rules["round_count"] * 3, "all_site_success_candidates": len(successes),
+                            "proxy_download_candidates": sum(bool(x.get("download_measurements")) for x in results)}
+                    report["steps"].append(step)
+                    report["mihomo_version"] = self.manager.version
+                    atomic_write_json(self.settings["runtime_dir"] / f"validation-{count}-results.json", results)
+                    atomic_write_json(self.settings["runtime_dir"] / "validation.json", report)
+                    if not passed:
+                        self.update(status="Validation Failed", stage="未通过路径验收，未启动大池优选")
+                        return report
+                report["batch100_passed"] = True
+                atomic_write_json(self.settings["runtime_dir"] / "validation.json", report)
+                self.update(status="Validation Passed", stage="1 / 10 / 100 验收通过")
+                return report
+            finally:
+                self.manager.benchmark_active = False
+                self.manager.stop()
+                self.update()

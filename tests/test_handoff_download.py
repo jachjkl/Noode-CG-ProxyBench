@@ -1,12 +1,12 @@
 import hashlib
 import importlib.util
-from pathlib import Path
 import subprocess
 import tempfile
-import unittest
 import threading
 import time
+import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("handoff_download", Path(__file__).parents[1] / "scripts/sync_cloud_handoff.py")

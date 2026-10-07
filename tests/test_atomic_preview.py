@@ -1,12 +1,12 @@
-import tempfile
-import unittest
 import os
+import tempfile
 import threading
+import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.io_utils import atomic_write_bytes
 from core.handoff import _write_handoff
+from core.io_utils import atomic_write_bytes
 
 
 class AtomicPreviewTests(unittest.TestCase):

@@ -5,31 +5,11 @@ from pathlib import Path
 
 
 class MigrationWorkflowTests(unittest.TestCase):
-    def test_cleanup_removes_obsolete_pipeline_loop_test(self) -> None:
-        cleanup = Path(__file__).parents[1] / ".github" / "workflows" / "cleanup-legacy.yml"
-        # The one-shot workflow removes itself after a successful migration.
-        if cleanup.is_file():
-            workflow = cleanup.read_text(encoding="utf-8")
-            self.assertIn("tests/test_pipeline_loop.py", workflow)
-            self.assertIn("scripts/run-local-cfdata.ps1", workflow)
-            self.assertIn("windows-controller/开始云端和本地优选.ps1", workflow)
-            self.assertIn("data/local-cfdata-candidates.txt", workflow)
-            self.assertNotIn("            output/nodes.txt\n", workflow)
-            self.assertNotIn("            output/nodes.json\n", workflow)
-            self.assertNotIn("            data/previous-top100.json\n", workflow)
-
-        ci = (
-            Path(__file__).parents[1] / ".github" / "workflows" / "ci.yml"
-        ).read_text(encoding="utf-8")
-        self.assertIn("rm -f -- tests/test_pipeline_loop.py", ci)
-
-        package_script = (
-            Path(__file__).parents[1] / "scripts" / "package.ps1"
-        ).read_text(encoding="utf-8")
-        for name in ("nodes\\.txt", "nodes\\.json", "nodes\\.csv", "api\\.json", "health\\.json"):
-            self.assertIn(name, package_script)
-        self.assertIn(r"data[\\/]handoff", package_script)
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_original_baseline_is_archived_and_dispatch_is_disabled(self):
+        root = Path(__file__).parents[1]
+        archived = (root / "docs/legacy/update.yml").read_text(encoding="utf-8")
+        current = (root / ".github/workflows/update.yml").read_text(encoding="utf-8")
+        self.assertIn("cloud-publish:", archived)
+        self.assertNotIn("git push", current)
+        self.assertNotIn("self-hosted", current)
+        self.assertIn("proxybench.yml", current)

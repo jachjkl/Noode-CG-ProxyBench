@@ -1,4 +1,13 @@
 __pycache__/
+config/*.local.yaml
+config/*.local.yml
+*.local.yaml
+*.local.yml
+runtime/
+data/proxy-bench/
+data/proxybench-rules.json
+dist/
+*.log
 *.py[cod]
 .pytest_cache/
 .ruff_cache/

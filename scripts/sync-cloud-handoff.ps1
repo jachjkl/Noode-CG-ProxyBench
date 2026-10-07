@@ -2,7 +2,7 @@
     [Parameter(Mandatory = $true)]
     [ValidatePattern("^[A-Fa-f0-9]{64}$")]
     [string]$ExpectedSha256,
-    [string]$Repository = "jachjkl/Noode-CG",
+    [string]$Repository = "jachjkl/Noode-CG-ProxyBench",
     [string]$Branch = "main",
     [string]$Destination = "data/handoff/cloud-raw10000.json.gz"
 )

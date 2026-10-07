@@ -1,0 +1,15 @@
+# 使用 Dashboard 的“导入配置”，选择现有 Clash/Mihomo 配置或粘贴节点链接。
+# 示例不是可用节点。真实参数仅写入 proxy-profile.local.yaml，不提交到 Git。
+proxy:
+  type: vless
+  port: 443
+  uuid: REPLACE_WITH_REAL_UUID
+  network: ws
+  tls: true
+  servername: YOUR_WORKER_DOMAIN
+  client-fingerprint: chrome
+  alpn: [http/1.1]
+  ws-opts:
+    path: /YOUR_REAL_WS_PATH
+    headers:
+      Host: YOUR_WORKER_DOMAIN

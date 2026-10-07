@@ -4,20 +4,26 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 from datetime import datetime
+from pathlib import Path
 
 
-def sources(repository: str, ref: str) -> list[str]:
-    raw = f"https://raw.githubusercontent.com/{repository}/{ref}/data/handoff/cloud-raw10000.json.gz"
+def sources(repository: str, ref: str, relative_path: str = "data/handoff/cloud-raw10000.json.gz") -> list[str]:
+    if relative_path not in {"data/handoff/cloud-raw10000.json.gz", "data/handoff/proxybench-pool.json.gz"}:
+        raise ValueError("交接路径不在白名单")
+    raw = f"https://raw.githubusercontent.com/{repository}/{ref}/{relative_path}"
     return [f"https://ghfast.top/{raw}", f"https://gh.ddlc.top/{raw}",
             f"https://cors.isteed.cc/{raw}",
-            f"https://cdn.jsdelivr.net/gh/{repository}@{ref}/data/handoff/cloud-raw10000.json.gz", raw,
-            f"https://github.com/{repository}/raw/{ref}/data/handoff/cloud-raw10000.json.gz"]
+            f"https://cdn.jsdelivr.net/gh/{repository}@{ref}/{relative_path}",
+            f"https://fastly.jsdelivr.net/gh/{repository}@{ref}/{relative_path}",
+            f"https://gcore.jsdelivr.net/gh/{repository}@{ref}/{relative_path}",
+            f"https://testingcf.jsdelivr.net/gh/{repository}@{ref}/{relative_path}",
+            f"https://gh-proxy.com/{raw}", f"https://ghproxy.net/{raw}", raw,
+            f"https://github.com/{repository}/raw/{ref}/{relative_path}"]
 
 
 def download(destination: Path, expected: str, urls: list[str], *, timeout: float = 30,
@@ -44,7 +50,7 @@ def download(destination: Path, expected: str, urls: list[str], *, timeout: floa
                 [curl, "--disable", "--fail", "--silent", "--show-error", "--location",
                  "--max-redirs", "4", "--connect-timeout", str(min(10, timeout)),
                  "--max-time", str(timeout), "--output", name, url],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout,
+                capture_output=True, timeout=timeout,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             if result.returncode:
@@ -67,9 +73,10 @@ def main():
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser()
     parser.add_argument("--sha256", required=True)
-    parser.add_argument("--repository", default="jachjkl/Noode-CG")
+    parser.add_argument("--repository", default="jachjkl/Noode-CG-ProxyBench")
     parser.add_argument("--ref", default="main")
     parser.add_argument("--destination", default="data/handoff/cloud-raw10000.json.gz")
+    parser.add_argument("--relative-path", default="data/handoff/cloud-raw10000.json.gz")
     args = parser.parse_args()
     root = Path(os.environ.get("NOODE_LOCAL_ROOT", Path.cwd().parent))
     logfile = root / "logs" / f"local-flow-download-{datetime.now():%Y%m%d-%H%M%S}.log"
@@ -83,7 +90,7 @@ def main():
         except OSError:
             pass  # Console remains authoritative if the disk is unavailable.
     try:
-        download(Path(args.destination), args.sha256, sources(args.repository, args.ref), emit=emit)
+        download(Path(args.destination), args.sha256, sources(args.repository, args.ref, args.relative_path), emit=emit)
     except Exception as exc:
         emit(f"候选下载失败：{exc}")
         return 1
