@@ -33,5 +33,6 @@ $("rulesForm").addEventListener("submit",async event=>{event.preventDefault();co
 $("autoImport").addEventListener("click",async()=>{try{await post("import-existing",{auto:true});feedback("已从本机配置导入，开始优选时自动完成路径验收。");}catch(error){feedback(error.message);}});
 $("importProfile").addEventListener("click",async()=>{try{await post("import",{text:$("profileText").value});$("profileText").value="";feedback("代理配置已导入并验证格式，参数仅保存在本机。");}catch(error){feedback(error.message);}});
 $("history").addEventListener("click",async()=>{try{const value=await post("results",{});historyRows=value.rows;table(historyRows);feedback(`已完成 ${value.total} 条，显示前 100 条。`);}catch(error){feedback(error.message);}});
+$("candidateList").addEventListener("click",async()=>{try{const value=await post("candidates",{});historyRows=value.rows;table(historyRows);feedback(`已获取 ${value.total} 条候选 IP，显示前 100 条；测量成功后进入发布竞争。`);}catch(error){feedback(error.message);}});
 setInterval(()=>fetch("/api/browser-presence",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client:"proxybench",closed:false})}).catch(()=>{}),15000);
 poll();

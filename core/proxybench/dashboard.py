@@ -44,6 +44,11 @@ class BenchDashboard:
         health = json.loads(health_path.read_text(encoding="utf-8")) if health_path.exists() else {}
         cloud_path = settings["state_dir"] / "cloud-live.json"
         cloud = json.loads(cloud_path.read_text(encoding="utf-8")) if cloud_path.exists() else {}
+        source_path = self.app / "data/handoff/proxybench-cloud-health.json"
+        if source_path.exists() and not live.get("sources"):
+            source_report = json.loads(source_path.read_text(encoding="utf-8"))
+            live["sources"] = source_report
+            live["candidate_total"] = source_report.get("unique_candidate_count", 0)
         if self.process and self.process.poll() is not None and self.log_handle:
             self.log_handle.close()
             self.log_handle = None
@@ -116,4 +121,9 @@ class BenchDashboard:
                 rows = list(json.loads(gzip.decompress(path.read_bytes())).values()) if path.exists() else []
                 offset = max(0, int(payload.get("offset", 0)))
                 return {"rows": rows[offset:offset + 100], "total": len(rows)}
+            if action == "candidates":
+                path = self.app / "data/handoff/proxybench-pool.json.gz"
+                rows = json.loads(gzip.decompress(path.read_bytes()))["pool"] if path.exists() else []
+                offset = max(0, int(payload.get("offset", 0)))
+                return {"rows": [{**row, "status": "Queued"} for row in rows[offset:offset + 100]], "total": len(rows)}
             raise ValueError("未知操作")

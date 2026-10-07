@@ -16,7 +16,7 @@ from pathlib import Path
 from core.io_utils import atomic_write_json
 
 from .profile import ProxyProfile, discover_profiles, import_discovered, safe_error
-from .state import Control, Stopped, Store
+from .state import Control, RunLock, Stopped, Store
 
 REPOSITORY = "jachjkl/Noode-CG-ProxyBench"
 
@@ -53,35 +53,35 @@ class CloudController:
 
     def prepare_runner(self) -> None:
         if os.name != "nt":
-            raise ValueError("本地自动控制器需要 Windows")
+            raise CloudError("本地自动控制器需要 Windows")
         actor = self.command(["api", "user", "--jq", ".login"]).strip()
         if actor != "jachjkl":
-            raise ValueError("请在 GitHub CLI 登录 jachjkl 账户")
+            raise CloudError("请在 GitHub CLI 登录 jachjkl 账户")
         self.runner_root.mkdir(parents=True, exist_ok=True)
         executable = self.runner_root / "bin/Runner.Listener.exe"
         if not executable.exists():
             self.update(stage="下载独立 Windows Runner", status="Preparing")
             release = self.command(["api", "repos/actions/runner/releases/latest"], as_json=True)
             if release.get("prerelease") or release.get("draft"):
-                raise ValueError("拒绝非正式 Runner")
+                raise CloudError("拒绝非正式 Runner")
             asset = next(x for x in release["assets"] if x["name"].startswith("actions-runner-win-x64-") and x["name"].endswith(".zip"))
             archive = self.runner_root / asset["name"]
             self.command(["release", "download", release["tag_name"], "--repo", "actions/runner", "--pattern", asset["name"],
                           "--dir", str(self.runner_root), "--clobber"], timeout=300)
             if hashlib.sha256(archive.read_bytes()).hexdigest() != asset.get("digest", "").removeprefix("sha256:"):
-                raise ValueError("Runner 官方摘要不匹配")
+                raise CloudError("Runner 官方摘要不匹配")
             with zipfile.ZipFile(archive) as package:
                 for member in package.infolist():
                     target = (self.runner_root / member.filename).resolve()
                     if self.runner_root.resolve() not in target.parents:
-                        raise ValueError("Runner ZIP 路径错误")
+                        raise CloudError("Runner ZIP 路径错误")
                 package.extractall(self.runner_root)
             archive.unlink()
         registration = self.runner_root / ".runner"
         if registration.exists():
             registered = json.loads(registration.read_text(encoding="utf-8-sig"))
             if registered.get("gitHubUrl", "").rstrip("/") != f"https://github.com/{REPOSITORY}":
-                raise ValueError("Runner 归属不是新仓库，拒绝修改")
+                raise CloudError("Runner 归属不是新仓库，拒绝修改")
         else:
             self.update(stage="为新仓库注册独立本机执行器", status="Preparing")
             # Token exists only in memory and official Runner credential storage. Never log command arguments.
@@ -94,7 +94,7 @@ class CloudController:
                                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             token = ""
             if configured.returncode:
-                raise ValueError("独立 Runner 注册失败")
+                raise CloudError("独立 Runner 注册失败")
         log_path = self.root / "runtime/runner-console.log"
         self.log = log_path.open("wb")
         env = {**os.environ, "NOODE_PROXYBENCH_APP": str(self.root), "NOODE_PROXYBENCH_PYTHON": sys.executable,
@@ -103,14 +103,33 @@ class CloudController:
             env["PATH"] = str(Path(self.gh).parent) + os.pathsep + env.get("PATH", "")
         self.runner = subprocess.Popen([str(executable), "run"], cwd=self.runner_root, env=env, stdout=self.log, stderr=self.log,
                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        for _ in range(30):
+        for _ in range(360):
             if self.runner.poll() is not None:
-                raise ValueError("独立 Runner 启动失败")
+                raise CloudError("独立 Runner 启动失败")
             if "Listening for Jobs" in log_path.read_text(encoding="utf-8", errors="replace")[-10000:]:
                 return
             self.control.checkpoint()
             time.sleep(0.5)
-        raise ValueError("独立 Runner 未能连接 GitHub")
+        raise CloudError("独立 Runner 未能连接 GitHub")
+
+    def unregister_runner(self) -> None:
+        registration = self.runner_root / ".runner"
+        if not registration.exists():
+            return
+        registered = json.loads(registration.read_text(encoding="utf-8-sig"))
+        suffix = hashlib.sha256(str(self.root).encode()).hexdigest()[:8]
+        expected_name = f"Noode-ProxyBench-{socket.gethostname()}-{suffix}"
+        if registered.get("gitHubUrl", "").rstrip("/") != f"https://github.com/{REPOSITORY}" or registered.get("agentName") != expected_name:
+            raise CloudError("Runner 清理归属不匹配")
+        token = self.command(["api", "--method", "POST", f"repos/{REPOSITORY}/actions/runners/remove-token"], as_json=True)["token"]
+        try:
+            removed = subprocess.run([str(self.runner_root / "bin/Runner.Listener.exe"), "remove", "--unattended", "--token", token],
+                                     cwd=self.runner_root, capture_output=True, timeout=60,
+                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if removed.returncode:
+                raise CloudError("独立 Runner 注册清理失败，下次启动将自动恢复连接")
+        finally:
+            token = ""
 
     def dispatch(self, session_id: str, reuse: bool) -> None:
         before = datetime.now(UTC).isoformat()[:19]
@@ -144,6 +163,10 @@ class CloudController:
                 time.sleep(0.2)
 
     def run(self, mode: str = "auto") -> dict:
+        with RunLock(self.root / "runtime/cloud"):
+            return self._run(mode)
+
+    def _run(self, mode: str) -> dict:
         self.control.path.unlink(missing_ok=True)
         try:
             if not self.settings["profile"].exists():
@@ -170,7 +193,13 @@ class CloudController:
                 self.dispatch(session["session_id"], reuse)
                 run = self.watch()
                 if run.get("conclusion") != "success":
-                    self.update(stage="云端或本地步骤失败，已保留 Last Good 和状态", status="Failed", run_url=run["url"])
+                    message = "云端或本地步骤失败，已保留 Last Good 和状态"
+                    validation_path = self.settings["runtime_dir"] / "validation.json"
+                    if any(job.get("name") == "local-select" and job.get("conclusion") == "failure" for job in run.get("jobs", [])) and validation_path.exists():
+                        validation = json.loads(validation_path.read_text(encoding="utf-8"))
+                        if not validation.get("batch100_passed"):
+                            message = validation.get("failure_reason", "真实代理带宽验收未通过") + "，已保留候选和 Last Good"
+                    self.update(stage=message, status="Failed", run_url=run["url"])
                     return {"status": run.get("conclusion"), "run_url": run["url"]}
                 health_path = self.settings["output_dir"] / "health.json"
                 health = json.loads(health_path.read_text(encoding="utf-8")) if health_path.exists() else {}
@@ -201,3 +230,8 @@ class CloudController:
                     self.runner.wait(timeout=10)
             if self.log:
                 self.log.close()
+            if self.runner:
+                try:
+                    self.unregister_runner()
+                except (CloudError, OSError, subprocess.TimeoutExpired):
+                    pass  # Preserve owned registration for retry if GitHub is unavailable.

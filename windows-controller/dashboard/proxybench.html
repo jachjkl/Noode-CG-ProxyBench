@@ -21,6 +21,6 @@
 <section id="rules" class="panel"><div class="panel-heading"><div><h2>真实代理优选规则</h2><p>运行中修改在下一 Batch 生效。三站固定为 Google / Cloudflare / GitHub；下载单并发保证路由与测量公平。</p></div></div>
 <form id="rulesForm" class="rule-grid"></form><button class="button primary" type="submit" form="rulesForm">保存规则</button><span id="ruleFeedback" role="status"></span></section>
 <section id="tests" class="panel"><div class="panel-heading"><div><h2>Candidate 实时结果</h2><p>每个 IP 保存三站三轮、站点平均、最终平均、请求丢失和三次下载结果。</p></div>
-<button class="button secondary" id="history">查看已完成 100 条</button></div><div class="table-scroll" tabindex="0" role="region" aria-label="完整代理实测数据表"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div></section>
+<div class="header-actions"><button class="button secondary" id="candidateList">查看已获取 IP</button><button class="button secondary" id="history">查看已完成 100 条</button></div></div><div class="table-scroll" tabindex="0" role="region" aria-label="完整代理实测数据表"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div></section>
 <section id="published" class="panel"><div class="panel-heading"><div><h2>发布与 Last Good</h2><p id="publishState">等待首轮完整 110 个唯一节点；不足时保留上次成功结果。</p></div><a id="actions" class="button secondary" target="_blank" rel="noreferrer">GitHub Actions</a></div>
 <button class="button secondary" data-action="cloud-start">云端候选交接与发布</button></section></main></div><script src="/proxybench.js" defer></script></body></html>

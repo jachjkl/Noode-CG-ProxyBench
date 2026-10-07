@@ -145,3 +145,42 @@ class SessionCloudTests(unittest.TestCase):
             with patch("core.proxybench.cloud.ProxyProfile.load"):
                 controller.run("continue")
             controller.dispatch.assert_called_once_with("old-session", False)
+
+    def test_pipeline_completed_run_accepts_fresh_handoff_and_retests_all_incumbents(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = self.settings(Path(directory))
+            settings.update(auto_update=False, geo_urls=[])
+            settings["profile"].parent.mkdir(parents=True)
+            settings["profile"].write_text(f'proxy:\n  type: vless\n  port: 443\n  uuid: {UUID}\n')
+            profile = ProxyProfile.load(settings["profile"])
+            manager = Mock()
+            manager.version = "fixture"
+            manager.health.return_value = {"status": "Stopped"}
+            settings["runtime_dir"].mkdir(parents=True)
+            (settings["runtime_dir"] / "validation.json").write_text(json.dumps({"profile_fingerprint": profile.fingerprint, "batch100_passed": True}))
+            incumbents = [{"ip": f"104.17.1.{i + 1}", "port": 443, "lane": "general" if i < 100 else "jp_append"}
+                          for i in range(110)]
+            path = settings["root"] / "data/handoff/proxybench-pool.json.gz"
+            path.parent.mkdir(parents=True)
+            report = {"continuation": True, "session_id": "same-session", "cycle": 4, "seed": "fresh-seed"}
+            path.write_bytes(gzip.compress(json.dumps({"pool": [{**pool(1)[0], "source_types": []}],
+                                                      "report": report, "incumbents": incumbents}).encode()))
+            pipeline = Pipeline(settings, manager=manager)
+            pipeline.store.state = {"phase": "completed", "cycle": 3, "session_id": "same-session", "run_id": "old-run",
+                                    "profile_fingerprint": profile.fingerprint, "sources": {"seed": "old-seed"},
+                                    "pool": [], "results": {}}
+            pipeline.store.commit()
+            observed = {}
+            def scan(candidates, field, profiles, **kwargs):
+                observed[field] = candidates
+                pipeline.store.state[field] = {f"{x['ip']}:{x['port']}": {**x, "qualified": True,
+                                               "proxy_average_latency_ms": 100, "geo_verified": True,
+                                               "geo_country": "JP" if field == "jp_results" else "US",
+                                               "jp_qualified": field == "jp_results"} for x in candidates}
+            pipeline.scan = scan
+            result = pipeline.run(resume=True, handoff=True)
+            self.assertTrue(result["published"])
+            self.assertEqual(result["cycle"], 4)
+            self.assertEqual(len(observed["general_results"]), 101)
+            self.assertEqual(len(observed["jp_results"]), 10)
+            self.assertTrue({x["ip"] for x in incumbents[:100]} <= {x["ip"] for x in observed["general_results"]})

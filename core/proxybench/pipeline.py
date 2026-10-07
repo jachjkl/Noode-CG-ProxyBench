@@ -327,14 +327,20 @@ class Pipeline:
                     successes = [x for x in results if x["proxy_loss_percent"] == 0 and x.get("qualified")]
                     passed = len(results) == count and bool(successes) and all(len(x["probes"][site]) == rules["round_count"] for x in results for site in ("google", "cloudflare", "github"))
                     step = {"candidate_count": count, "independent_results": len(results), "passed": passed,
-                            "site_probe_count": count * rules["round_count"] * 3, "all_site_success_candidates": len(successes),
-                            "proxy_download_candidates": sum(bool(x.get("download_measurements")) for x in results)}
+                            "site_probe_count": count * rules["round_count"] * 3,
+                            "all_site_success_candidates": sum(x["proxy_loss_percent"] == 0 for x in results),
+                            "qualified_candidates": len(successes),
+                            "proxy_download_candidates": sum(bool(x.get("download_measurements")) for x in results),
+                            "proxy_download_success_candidates": sum(bool(x.get("download_measurements")) and
+                                                                        all(m["success"] for m in x["download_measurements"]) for x in results)}
                     report["steps"].append(step)
                     report["mihomo_version"] = self.manager.version
                     atomic_write_json(self.settings["runtime_dir"] / f"validation-{count}-results.json", results)
                     atomic_write_json(self.settings["runtime_dir"] / "validation.json", report)
                     if not passed:
-                        self.update(status="Validation Failed", stage="未通过路径验收，未启动大池优选")
+                        report["failure_reason"] = "真实带宽测速失败" if step["all_site_success_candidates"] else "三网站访问验收失败"
+                        atomic_write_json(self.settings["runtime_dir"] / "validation.json", report)
+                        self.update(status="Validation Failed", stage=report["failure_reason"] + "，未启动大池优选")
                         return report
                 report["batch100_passed"] = True
                 atomic_write_json(self.settings["runtime_dir"] / "validation.json", report)

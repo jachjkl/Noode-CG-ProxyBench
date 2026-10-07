@@ -12,4 +12,6 @@ GitHub 使用本机 jachjkl 授权，Runner 标签 noode-cg-proxybench、独立 
 
 公开包通过 `python scripts/build_windows_package.py` 构建。所有者专用包通过 `python scripts/build_windows_package.py --personal` 单独构建，在 ZIP 内仅额外加入 config/proxy-profile.local.yaml。专用包不上传公开仓库或 GitHub Release；GitHub 授权和 Runner 注册仍由本机自动获取。
 
+`python scripts/build_windows_installer.py --personal` 将专用 ZIP 嵌入单文件 EXE。双击 EXE 自动安装到桌面/软件/Noode-CG-ProxyBench，随后打开自动优选窗口；重新安装保留已有本机 Profile 和测试状态，运行中拒绝覆盖内核。ZIP 解压后仍可直接双击 VBS 启动。
+
 开始优选自动执行云端候选、真实路径验收、本地测速与发布。断点继续复用已有交接和完成批次。继续获取 IP 使用同一会话排除集合重新请求候选、与旧普通 TOP100 竞争、JP10 末尾追加。独立执行器贯穿最多三轮自动补测，发布确认后仅删除匹配的 pending，保留检查点。
