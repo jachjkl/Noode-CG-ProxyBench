@@ -13,6 +13,7 @@ from core.proxybench.state import Control
 class FakeController:
     def __init__(self):
         self.calls = []
+        self.speed_calls = []
         self.lock = threading.Lock()
 
     def delay(self, name, url, expected, timeout):
@@ -27,6 +28,10 @@ class FakeController:
             return {"success": True, "speed_mbps": 24.0, "received_bytes": kwargs["wanted_bytes"],
                     "routing_proof": "connection-chain", "selected_proxy": name, "body": b""}
         return {"success": True, "body": b'{"country_code":"JP"}', "routing_proof": "connection-chain"}
+
+    def legacy_speed(self, name, url, **kwargs):
+        self.speed_calls.append((name, url, kwargs))
+        return self.request(name, url, **kwargs)
 
 
 class FakeManager:
@@ -58,7 +63,10 @@ class BenchmarkTests(unittest.TestCase):
             self.assertEqual(len({row[0] for row in chunk}), 100)
             self.assertEqual({row[1] for row in chunk}, {SITES[index % 3][1]})
         self.assertTrue(all(row["qualified"] and row["jp_qualified"] for row in results))
-        self.assertTrue(all(len(row["download_rounds_mbps"]) == 3 for row in results))
+        self.assertTrue(all(len(row["download_rounds_mbps"]) == 1 for row in results))
+        self.assertEqual(len(manager.controller.speed_calls), 100)
+        self.assertTrue(all(call[2]["wanted_bytes"] == 524288 and call[2]["maximum_download_seconds"] == 7
+                            and call[2]["minimum_completion_ratio"] == .95 for call in manager.controller.speed_calls))
         self.assertEqual(results[0]["proxy_download_average_mbytes"], 3.0)
 
     def test_one_failed_probe_is_loss_and_no_download(self):
@@ -83,6 +91,20 @@ class BenchmarkTests(unittest.TestCase):
             result = Benchmark(manager, RULES, Control(Path(directory)), geo_urls=["https://a/", "https://b/"]).geo("PB-1")
         self.assertTrue(result["geo_conflict"])
         self.assertFalse(result["jp_qualified"])
+
+    def test_single_speed_failure_does_not_block_other_candidates(self):
+        manager = FakeManager()
+        original = manager.controller.legacy_speed
+        def speed(name, url, **kwargs):
+            if name == "PB-000001":
+                raise TimeoutError()
+            return original(name, url, **kwargs)
+        manager.controller.legacy_speed = speed
+        with tempfile.TemporaryDirectory() as directory:
+            results = Benchmark(manager, {**RULES, "round_cooldown_seconds": 0}, Control(Path(directory)), geo_urls=[]).batch(pool(2), object())
+        self.assertFalse(results[0]["qualified"])
+        self.assertEqual(results[0]["status"], "Rejected Speed")
+        self.assertTrue(results[1]["qualified"])
 
     def test_latency_precedes_download_in_ranking(self):
         fast_latency = {"ip": "104.16.1.1", "port": 443, "proxy_loss_percent": 0, "site_success_count": 9,

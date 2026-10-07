@@ -10,4 +10,4 @@ The application uses the owner's local GitHub login and creates a separate repos
 
 The interface is Chinese, with 300 IPs per page and an on-demand detail dialog. Initial discovery fetches both full feeds plus 10,000 official candidates. Subsequent discovery requests fresh 10,000-address edge samples only. Final retests compete with the previous ordinary TOP100 and append verified Japanese exits. Insufficient results continue replenishment; pause and stop preserve progress.
 
-Public archives exclude local credentials, runner registration, measurements, logs, and transient configurations. A valid bundled profile still requires real network acceptance before the formal large-pool scan is unlocked.
+Public archives exclude local credentials, runner registration, measurements, logs, and transient configurations. Version 1.0.1 initializes the isolated rule-mode core and starts the candidate scan without the former startup bandwidth gate. The speed probe follows the original local package's 512 KiB / 95% / 3 Mbps defaults; failures remain per-candidate results.

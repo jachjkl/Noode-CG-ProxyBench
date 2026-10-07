@@ -23,5 +23,5 @@ def package(destination: Path) -> list[str]:
 
 
 if __name__ == "__main__":
-    path = ROOT / "dist/Noode-CG-ProxyBench-1.0.0.zip"
+    path = ROOT / "dist/Noode-CG-ProxyBench-1.0.1.zip"
     print(f"Packaged {len(package(path))} files: {path}")

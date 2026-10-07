@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def build(personal: bool = False) -> Path:
-    filename = "Noode-CG-ProxyBench-专用版-1.0.0" if personal else "Noode-CG-ProxyBench-Windows-1.0.0"
+    filename = "Noode-CG-ProxyBench-专用版-1.0.1" if personal else "Noode-CG-ProxyBench-Windows-1.0.1"
     archive = ROOT / "dist" / (filename + ".zip")
     destination = ROOT / "dist" / (filename + ".exe")
     framework = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Microsoft.NET/Framework64/v4.0.30319"

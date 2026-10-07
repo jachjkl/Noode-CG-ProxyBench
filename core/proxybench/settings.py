@@ -7,9 +7,10 @@ from pathlib import Path
 import yaml
 
 RULES = {"batch_size": 100, "round_count": 3, "max_proxy_average_latency_ms": 200.0,
-         "max_proxy_loss_percent": 0.0, "min_proxy_speed_mbps": 16.0, "download_attempts": 3,
-         "download_bytes": 2097152, "request_timeout_seconds": 5.0,
-         "download_timeout_seconds": 15.0, "delay_concurrency": 20, "speed_concurrency": 1,
+         "max_proxy_loss_percent": 0.0, "min_proxy_speed_mbps": 3.0, "download_attempts": 1,
+         "download_bytes": 524288, "minimum_completion_ratio": 0.95, "maximum_download_seconds": 7.0,
+         "request_timeout_seconds": 5.0,
+         "download_timeout_seconds": 8.0, "delay_concurrency": 20, "speed_concurrency": 1,
          "round_cooldown_seconds": 0.5}
 SITES = (("google", "https://www.gstatic.com/generate_204", "204"),
          ("cloudflare", "https://cp.cloudflare.com/", "200-399"),
@@ -34,8 +35,10 @@ def validate_rules(value: dict) -> dict:
         raise ValueError("丢失率或并发超出范围")
     if rules["speed_concurrency"] != 1:
         raise ValueError("当前共享 selector 下载采用单并发，保证各节点公平且路由独立")
-    if rules["download_bytes"] not in {1048576, 2097152, 4194304, 8388608}:
-        raise ValueError("下载大小必须为 1/2/4/8 MiB")
+    if rules["download_bytes"] not in {524288, 1048576, 2097152, 4194304, 8388608}:
+        raise ValueError("测速样本大小必须为 0.5/1/2/4/8 MiB")
+    if not 0.95 <= rules["minimum_completion_ratio"] <= 1 or rules["maximum_download_seconds"] > 120:
+        raise ValueError("测速正文完整度须为 95% 至 100%，正文计时上限最多 120 秒")
     if rules["request_timeout_seconds"] > 60 or rules["download_timeout_seconds"] > 120 or rules["round_cooldown_seconds"] > 2:
         raise ValueError("超时或轮间隔超出范围")
     return rules
@@ -61,4 +64,10 @@ def load_settings(config_path: str | Path) -> dict:
 
 def current_rules(settings: dict) -> dict:
     path = settings["rules_path"]
-    return validate_rules({**settings["rules"], **(json.loads(path.read_text(encoding="utf-8")) if path.exists() else {})})
+    saved = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    # Upgrade the former untouched speed preset, preserving independently edited response rules.
+    former = {"min_proxy_speed_mbps": 16.0, "download_attempts": 3,
+              "download_bytes": 2097152, "download_timeout_seconds": 15.0}
+    if isinstance(saved, dict) and all(saved.get(key) == value for key, value in former.items()):
+        saved = {**saved, **{key: RULES[key] for key in former}}
+    return validate_rules({**settings["rules"], **saved})

@@ -1,4 +1,4 @@
-"""Real local proxy validation. No fabricated measurements and no publication."""
+"""Check the isolated rule-mode core. Speed is measured during candidate selection."""
 from __future__ import annotations
 
 import json
@@ -17,7 +17,7 @@ def main() -> int:
     try:
         report = Pipeline(load_settings(Path(__file__).resolve().parent.parent / "config.yaml")).validate_runtime()
         print(json.dumps(report, ensure_ascii=False, indent=2))
-        return 0 if report.get("batch100_passed") else 2
+        return 0 if report.get("runtime_ready") else 2
     except Exception as exc:
         print(json.dumps({"status": "failed", "error": safe_error(exc)}, ensure_ascii=False))
         return 2

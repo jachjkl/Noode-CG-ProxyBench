@@ -1,6 +1,6 @@
 # Ordinary TOP100 and Japanese append TOP10
 
-All qualified candidates use the same response, request-loss, and bandwidth gates. Japanese source hints are discovery metadata, not results. Geography is requested through the same candidate using ipwho.is and api.country.is. At least one valid country code is required; conflicting valid observations disqualify the Japanese append lane.
+All qualified candidates use the same response, request-loss, and original-package speed gates. Japanese source hints are discovery metadata, not results. Geography is requested through the same candidate using ipwho.is and api.country.is. At least one valid country code is required; conflicting valid observations disqualify the Japanese append lane.
 
 The ordinary current shortlist and the previous published ordinary TOP100 compete in uniform retests. Ranking selects the best 100 ordinary candidates. Remaining eligible Japanese candidates and previous Japanese append entries are separately retested in small groups until ten pass or the available set is exhausted.
 

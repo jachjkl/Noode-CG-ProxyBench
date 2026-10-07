@@ -206,8 +206,8 @@ class CloudController:
                     validation_path = self.settings["runtime_dir"] / "validation.json"
                     if any(job.get("name") in {"local-select", "本地真实代理测速"} and job.get("conclusion") == "failure" for job in run.get("jobs", [])) and validation_path.exists():
                         validation = json.loads(validation_path.read_text(encoding="utf-8"))
-                        if not validation.get("batch100_passed"):
-                            message = validation.get("failure_reason", "真实代理带宽验收未通过") + "，已保留候选和 Last Good"
+                        if validation.get("method") == "isolated-rule-core-check-v2" and not validation.get("runtime_ready"):
+                            message = validation.get("failure_reason", "规则代理内核初始化未完成") + "，已保留候选和 Last Good"
                     self.update(stage=message, status="Failed", run_url=run["url"])
                     return {"status": run.get("conclusion"), "run_url": run["url"]}
                 health_path = self.settings["output_dir"] / "health.json"

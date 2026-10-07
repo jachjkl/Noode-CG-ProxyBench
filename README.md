@@ -13,7 +13,7 @@ The application automatically connects these stages:
 1. Request a GitHub Actions run using the owner's local GitHub login.
 2. Fetch both configured feeds in full and sample 10,000 additional official Cloudflare IPv4 candidates.
 3. Download the immutable handoff through verified mirrors or the authenticated runner channel.
-4. Measure candidate-specific proxy access, response times, request success, and actual bandwidth on Windows.
+4. Measure candidate-specific proxy access, response times, request success, and the original package's small-sample network speed on Windows.
 5. Retest current candidates against the previously published ordinary TOP100, select the best 100, and append 10 independently verified Japanese exits.
 6. Upload the allowlisted results to Ubuntu for final validation and publication.
 
@@ -36,7 +36,7 @@ The main list shows 300 IPs per page and eight summary columns. Detailed measure
 
 Each batch loads at most 100 distinct proxies into one isolated Mihomo core. The core uses rule mode, loopback-only listeners, and no TUN interface. The application does not change the system proxy or terminate the user's existing Clash or Mihomo processes.
 
-Google, Cloudflare, and GitHub are tested for three rounds by default, producing nine candidate-specific probes. The defaults require zero failed requests and an average response time of at most 200 ms. Candidates passing these checks receive three complete 2 MiB proxy transfers from the Cloudflare bandwidth endpoint, with an average of at least 16 Mbps, equivalent to 2 MB/s. Response and bandwidth thresholds are editable.
+Google, Cloudflare, and GitHub are tested for three rounds by default, producing nine candidate-specific probes. The defaults require zero failed requests and an average response time of at most 200 ms. Network speed now follows the original local installation package: one 512 KiB sample from the Cloudflare speed endpoint, at least 95% body completion, an 8-second I/O timeout, a 7-second body-time limit, and a default minimum of 3 Mbps. Timing begins after response headers. Each request explicitly passes through the selected candidate's rule-mode proxy. Response and speed thresholds are editable. There is no separate startup bandwidth acceptance gate; an individual speed failure rejects that IP and selection continues.
 
 Cloudflare uses `cp.cloudflare.com` first. If preflight fails there and succeeds at `www.cloudflare.com/cdn-cgi/trace`, the entire measurement run consistently uses the trace endpoint and records that choice.
 
@@ -50,7 +50,7 @@ Outputs: `nodes.txt`, `nodes.json`, `nodes.csv`, `api.json`, `ip.zip`, and `heal
 
 Automated checks pass, including candidate paging, independent batch probes, checkpoint recovery, incumbent competition, failed-retest replacement, and continuous replenishment. Real cloud discovery produced 21,537 candidates in the first round and 10,000 new IPs in each of the next two rounds, with no overlap.
 
-Real authenticated proxy traffic has been exercised, including 100 independently loaded nodes and 900 site probes. The available Worker profile has **not passed the required bandwidth acceptance test**, so the formal large-pool scan and a real 100+10 publication remain gated. The package includes the actual local configuration, but configuration syntax validity does not guarantee that its upstream proxy can complete the bandwidth transfer. See [validation evidence and limitations](docs/VALIDATION.md).
+Real authenticated proxy traffic has been exercised, including 100 independently loaded nodes and 900 site probes. Version 1.0.1 replaces the earlier three-transfer bandwidth gate with the original package's small-sample speed method. Core initialization checks node loading and rule routing; endpoint failures are handled per candidate during selection. A real 100+10 publication has not yet been verified. See [validation evidence and limitations](docs/VALIDATION.md).
 
 ## Development
 

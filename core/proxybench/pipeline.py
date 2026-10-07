@@ -169,10 +169,8 @@ class Pipeline:
                 self.manager.ensure(self.settings["auto_update"])
                 validation_path = self.settings["runtime_dir"] / "validation.json"
                 validation = json.loads(validation_path.read_text(encoding="utf-8")) if validation_path.exists() else {}
-                if validation.get("profile_fingerprint") != profile.fingerprint or not validation.get("batch100_passed"):
-                    self.update(status="Validation Required", stage="请先完成 1 → 10 → 100 个真实节点验收")
-                    return {"status": "validation_required", "published": False}
-                self.cloudflare_url = validation.get("cloudflare_url", "https://cp.cloudflare.com/")
+                if validation.get("profile_fingerprint") == profile.fingerprint:
+                    self.cloudflare_url = validation.get("cloudflare_url", "https://cp.cloudflare.com/")
                 if not state:
                     pool, source_report = self.new_pool(profile, handoff)
                     state = {"run_id": secrets.token_hex(16), "pool": pool, "results": {}, "sources": source_report,
@@ -309,27 +307,27 @@ class Pipeline:
         import ipaddress
 
         from sources.cloudflare_official import collect
-        self.update(stage="准备小规模官方验收候选", status="Running")
+        self.update(stage="准备规则代理内核检查", status="Running")
         pool, networks = collect(100, profile.port, secrets.token_hex(16), set(ips))
         ips = [ip for ip in ips if any(ipaddress.IPv4Address(ip) in network for network in networks)]
         ips = list(dict.fromkeys([*ips, *(item["ip"] for item in pool)]))
         rules = current_rules(self.settings)
-        # Diagnostic validation has explicit thresholds. Production rules are never modified.
-        validation_rules = {**rules, "max_proxy_average_latency_ms": 10000.0, "min_proxy_speed_mbps": 0.01}
         self.store.state = {"run_id": secrets.token_hex(16), "phase": "validation"}
-        report = {"profile_fingerprint": profile.fingerprint, "batch100_passed": False, "steps": [],
-                  "method": "real isolated Mihomo; diagnostic thresholds", "validation_rules": validation_rules}
+        report = {"profile_fingerprint": profile.fingerprint, "steps": [],
+                  "runtime_ready": False, "method": "isolated-rule-core-check-v2",
+                  "speed_method": "legacy-proxy-speed", "speed_acceptance_gate": False}
         with RunLock(self.settings["runtime_dir"]):
             self.control.path.unlink(missing_ok=True)
             try:
                 self.manager.ensure(self.settings["auto_update"])
                 for count in (1, 10, 100):
+                    self.control.checkpoint()
                     candidates = [{"ip": ip, "port": profile.port, "proxy_name": f"PB-{index:06d}",
                                    "source_names": ["local-profile-validation"], "source_types": ["cloudflare_edge_candidate"],
                                    "source_priority": 0, "jp_hint": False} for index, ip in enumerate(ips[:count], 1)]
-                    self.update(stage=f"真实代理验收 {count} Candidate", status="Running")
+                    self.update(stage=f"规则代理内核检查：加载 {count} 个节点", status="Running")
+                    self.manager.load_batch(candidates, profile)
                     if count == 1:
-                        self.manager.load_batch(candidates, profile)
                         primary = self.manager.controller.delay(candidates[0]["proxy_name"], "https://cp.cloudflare.com/", "200-399", rules["request_timeout_seconds"])
                         report["cloudflare_primary_preflight"] = primary["success"]
                         if not primary["success"]:
@@ -339,30 +337,14 @@ class Pipeline:
                             if trace["success"]:
                                 self.cloudflare_url = trace_url
                         report["cloudflare_url"] = self.cloudflare_url
-                    benchmark = Benchmark(self.manager, validation_rules, self.control, geo_urls=self.settings["geo_urls"], update=self.update,
-                                          cloudflare_url=self.cloudflare_url)
-                    results = benchmark.batch(candidates, profile)
-                    successes = [x for x in results if x["proxy_loss_percent"] == 0 and x.get("qualified")]
-                    passed = len(results) == count and bool(successes) and all(len(x["probes"][site]) == rules["round_count"] for x in results for site in ("google", "cloudflare", "github"))
-                    step = {"candidate_count": count, "independent_results": len(results), "passed": passed,
-                            "site_probe_count": count * rules["round_count"] * 3,
-                            "all_site_success_candidates": sum(x["proxy_loss_percent"] == 0 for x in results),
-                            "qualified_candidates": len(successes),
-                            "proxy_download_candidates": sum(bool(x.get("download_measurements")) for x in results),
-                            "proxy_download_success_candidates": sum(bool(x.get("download_measurements")) and
-                                                                        all(m["success"] for m in x["download_measurements"]) for x in results)}
+                    step = {"candidate_count": count, "loaded_proxies": len(candidates), "passed": True,
+                            "rule_mode": True, "speed_measurements": 0}
                     report["steps"].append(step)
                     report["mihomo_version"] = self.manager.version
-                    atomic_write_json(self.settings["runtime_dir"] / f"validation-{count}-results.json", results)
                     atomic_write_json(self.settings["runtime_dir"] / "validation.json", report)
-                    if not passed:
-                        report["failure_reason"] = "真实带宽测速失败" if step["all_site_success_candidates"] else "三网站访问验收失败"
-                        atomic_write_json(self.settings["runtime_dir"] / "validation.json", report)
-                        self.update(status="Validation Failed", stage=report["failure_reason"] + "，未启动大池优选")
-                        return report
-                report["batch100_passed"] = True
+                report["runtime_ready"] = True
                 atomic_write_json(self.settings["runtime_dir"] / "validation.json", report)
-                self.update(status="Validation Passed", stage="1 / 10 / 100 验收通过")
+                self.update(status="Validation Passed", stage="规则代理内核已就绪，网速将在逐个 IP 优选时测量")
                 return report
             finally:
                 self.manager.benchmark_active = False

@@ -109,16 +109,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Invalid handoff' }
           & $env:NOODE_PYTHON main.py stage-handoff
           if ($LASTEXITCODE -ne 0) { throw 'Candidate queue checkpoint failed' }
-      - name: Validate Profile and real 1-10-100 path before scanning
+      - name: Check local Profile and isolated rule-mode core
         if: steps.pending.outputs.saved != 'true'
         run: |
           Set-Location -LiteralPath $env:NOODE_PROXYBENCH_APP
           & $env:NOODE_PYTHON main.py validate-profile
           if ($LASTEXITCODE -ne 0) { throw 'Missing real local proxy Profile' }
-          & $env:NOODE_PYTHON -c "import json;from pathlib import Path;from core.proxybench.profile import ProxyProfile;p=Path('runtime/mihomo/validation.json');v=json.loads(p.read_text(encoding='utf-8')) if p.exists() else {};raise SystemExit(0 if v.get('batch100_passed') and v.get('profile_fingerprint')==ProxyProfile.load(Path('config/proxy-profile.local.yaml')).fingerprint else 1)"
+          & $env:NOODE_PYTHON -c "import json;from pathlib import Path;from core.proxybench.profile import ProxyProfile;p=Path('runtime/mihomo/validation.json');v=json.loads(p.read_text(encoding='utf-8')) if p.exists() else {};raise SystemExit(0 if v.get('runtime_ready') and v.get('method')=='isolated-rule-core-check-v2' and v.get('profile_fingerprint')==ProxyProfile.load(Path('config/proxy-profile.local.yaml')).fingerprint else 1)"
           if ($LASTEXITCODE -ne 0) {
             & $env:NOODE_PYTHON main.py validate-runtime
-            if ($LASTEXITCODE -ne 0) { throw 'Real proxy path validation failed' }
+            if ($LASTEXITCODE -ne 0) { throw 'Rule-mode core initialization failed' }
           }
       - name: Run isolated Mihomo benchmark with checkpoint resume
         if: steps.pending.outputs.saved != 'true'

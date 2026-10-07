@@ -6,4 +6,4 @@ Import supports VLESS, Trojan, and VMess links and native single-node Mihomo YAM
 
 Protocol, port, UUID or password, transport, TLS, SNI, WebSocket Host and path, ALPN, fingerprint, and native options remain immutable within a profile. Candidate construction changes only the server IP and internal name.
 
-Syntax validation does not establish network usability. Real site and complete bandwidth probes must pass the 1/10/100 runtime acceptance gate. Missing or invalid configuration fails explicitly; the application neither invents authentication nor substitutes DIRECT traffic.
+Syntax validation does not establish network usability. Core initialization checks 1/10/100 node loading. Site access and the original-package speed probe are evaluated per candidate during selection, with no separate startup bandwidth gate. Missing or invalid configuration fails explicitly; the application neither invents authentication nor substitutes DIRECT traffic.

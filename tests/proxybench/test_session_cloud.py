@@ -197,7 +197,8 @@ class SessionCloudTests(unittest.TestCase):
             manager.version = "fixture"
             manager.health.return_value = {"status": "Stopped"}
             settings["runtime_dir"].mkdir(parents=True)
-            (settings["runtime_dir"] / "validation.json").write_text(json.dumps({"profile_fingerprint": profile.fingerprint, "batch100_passed": True}))
+            # A previous failed bandwidth gate must no longer prevent a real scan/retest.
+            (settings["runtime_dir"] / "validation.json").write_text(json.dumps({"profile_fingerprint": profile.fingerprint, "batch100_passed": False}))
             incumbents = [{"ip": f"104.17.1.{i + 1}", "port": 443, "lane": "general" if i < 100 else "jp_append"}
                           for i in range(110)]
             path = settings["root"] / "data/handoff/proxybench-pool.json.gz"

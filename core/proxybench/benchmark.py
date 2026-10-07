@@ -108,8 +108,10 @@ class Benchmark:
                     result["status"] = "Speed Testing"
                     self.update(stage="Speed Testing", candidates=list(records.values()))
                     try:
-                        measurement = self.manager.controller.request(name, f"https://speed.cloudflare.com/__down?bytes={rules['download_bytes']}",
-                                                                      timeout=rules["download_timeout_seconds"], wanted_bytes=rules["download_bytes"])
+                        measurement = self.manager.controller.legacy_speed(name, f"https://speed.cloudflare.com/__down?bytes={rules['download_bytes']}",
+                                                                           timeout=rules["download_timeout_seconds"], wanted_bytes=rules["download_bytes"],
+                                                                           maximum_download_seconds=rules["maximum_download_seconds"],
+                                                                           minimum_completion_ratio=rules["minimum_completion_ratio"])
                         measurement.pop("body", None)
                         downloads.append(measurement)
                     except Exception as exc:

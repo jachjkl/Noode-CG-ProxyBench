@@ -5,13 +5,15 @@ import json
 import os
 import shutil
 import socket
-import ssl
 import subprocess
 import tempfile
 import time
 import urllib.error
 import urllib.request
 from urllib.parse import quote, urlencode, urlsplit
+
+from core.speed_test import _accepted_speed_mbps
+from core.tls_check import make_ssl_context
 
 
 class CoreError(RuntimeError):
@@ -144,16 +146,16 @@ class Controller:
                 process.wait(timeout=5)
             os.unlink(temporary)
 
-    def _request_python(self, name: str, url: str, *, timeout: float, wanted_bytes: int | None = None) -> dict:
-        """Serial caller owns selection. Standard library HTTPS through HTTP CONNECT only."""
+    def legacy_speed(self, name: str, url: str, *, timeout: float, wanted_bytes: int,
+                     maximum_download_seconds: float = 7.0, minimum_completion_ratio: float = 0.95) -> dict:
+        """The original package's body-timed speed algorithm, over the named proxy."""
         destination = urlsplit(url)
         if destination.scheme != "https" or destination.username or destination.password:
             raise ValueError("Benchmark endpoint 必须为 HTTPS")
         self.select(name)
         connection = http.client.HTTPSConnection("127.0.0.1", self.mixed_port, timeout=timeout,
-                                                 context=ssl.create_default_context())
+                                                 context=make_ssl_context(True, "TLSv1.2"))
         connection.set_tunnel(destination.hostname, destination.port or 443)
-        deadline = time.monotonic() + timeout
         stage = "Connect/TLS"
         received = 0
         proof = {}
@@ -162,36 +164,38 @@ class Controller:
             transport = connection.sock
             stage = "Routing Verification"
             proof = self._connection_proof(name, transport.getsockname()[1])
-            transport.settimeout(max(0.001, deadline - time.monotonic()))
+            transport.settimeout(timeout)
             path = destination.path or "/"
             if destination.query:
                 path += "?" + destination.query
             stage = "HTTP Headers"
-            connection.request("GET", path, headers={"User-Agent": "Noode-CG-ProxyBench/1.0", "Accept-Encoding": "identity"})
+            connection.request("GET", path, headers={"Host": destination.hostname,
+                               "User-Agent": "Noode-CG-ProxyBench/1.0.1", "Accept": "application/octet-stream",
+                               "Accept-Encoding": "identity", "Connection": "close"})
             response = connection.getresponse()
             if response.status != 200:
                 raise ValueError("Benchmark endpoint 状态异常")
             stage = "HTTP Body"
-            chunks = []
-            limit = wanted_bytes if wanted_bytes is not None else 65536
             started = time.perf_counter()
-            while received < limit:
-                remaining = deadline - time.monotonic()
+            deadline = started + maximum_download_seconds
+            while received < wanted_bytes:
+                remaining = deadline - time.perf_counter()
                 if remaining <= 0:
                     raise TimeoutError
-                transport.settimeout(remaining)
-                chunk = response.read(min(65536, limit - received))
+                transport.settimeout(min(timeout, remaining))
+                chunk = response.read(min(65536, wanted_bytes - received))
                 if not chunk:
                     break
                 received += len(chunk)
-                if wanted_bytes is None:
-                    chunks.append(chunk)
-            elapsed = max(time.perf_counter() - started, 0.000001)
-            if wanted_bytes is not None and received != wanted_bytes:
+            elapsed = max(time.perf_counter() - started, 0.001)
+            speed = _accepted_speed_mbps(received, wanted_bytes, elapsed, minimum_completion_ratio)
+            if speed is None:
                 raise ValueError("测速正文不完整")
-            return {**proof, "success": True, "received_bytes": received, "seconds": elapsed,
-                    "speed_mbps": received * 8 / elapsed / 1_000_000 if wanted_bytes else None,
-                    "body": b"".join(chunks) if wanted_bytes is None else b""}
+            return {**proof, "success": True, "http_status": response.status,
+                    "method": "legacy-proxy-speed", "wanted_bytes": wanted_bytes,
+                    "received_bytes": received, "completion_ratio": received / wanted_bytes,
+                    "minimum_completion_ratio": minimum_completion_ratio,
+                    "seconds": elapsed, "speed_mbps": speed}
         except Exception as exc:
             raise RequestError(stage, received, type(exc).__name__, proof) from None
         finally:

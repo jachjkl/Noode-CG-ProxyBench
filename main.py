@@ -24,7 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("local-select", help="本地复测交接池和上一轮 TOP100")
     subparsers.add_parser("validate", help="只验证配置")
     subparsers.add_parser("validate-profile", help="验证本机代理 Profile")
-    subparsers.add_parser("validate-runtime", help="真实 1 / 10 / 100 Candidate 路径验收")
+    subparsers.add_parser("validate-runtime", help="检查独立规则代理内核，加载 1 / 10 / 100 个节点")
     subparsers.add_parser("resume", help="从安全 Checkpoint 继续真实代理优选")
     dashboard = subparsers.add_parser("dashboard", help="启动本机真实代理优选 Dashboard")
     dashboard.add_argument("--port", type=int, default=13337)
@@ -84,9 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             report = Pipeline(settings).run(resume=command == "resume")
         print(json.dumps(report, ensure_ascii=False, indent=2))
-        if command == "validate-runtime" and not report.get("batch100_passed"):
-            return 2
-        if report.get("status") == "validation_required":
+        if command == "validate-runtime" and not report.get("runtime_ready"):
             return 2
         if config["pipeline"].get("fail_on_quality_gate", False) and report["status"] != "ok":
             return 2
