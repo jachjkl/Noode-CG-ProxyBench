@@ -35,6 +35,18 @@ class DashboardPageTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 controller.action("candidates", {"page": 0})
 
+    def test_obsolete_bandwidth_gate_does_not_block_ready_screen_after_upgrade(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            controller = self.controller(root)
+            self.write(root / "data/proxy-bench/live.json", {"status": "Validation Failed",
+                       "phase": "validation", "stage": "真实带宽测速失败，未启动大池优选", "candidate_total": 21538})
+            snapshot = controller.snapshot()
+            self.assertEqual(snapshot["live"]["status"], "Ready")
+            self.assertEqual(snapshot["live"]["candidate_total"], 21538)
+            self.assertFalse(snapshot["running"])
+            self.assertNotIn("带宽", snapshot["live"]["stage"])
+
     def test_paged_candidates_include_actual_saved_measurements_and_new_batch_updates(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

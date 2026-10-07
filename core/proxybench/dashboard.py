@@ -81,6 +81,10 @@ class BenchDashboard:
             live = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         except (OSError, ValueError):
             live = {"status": "正在刷新"}
+        running = bool(self.process and self.process.poll() is None)
+        if not running and live.get("status") in {"Validation Failed", "Validation Required"} and "带宽" in live.get("stage", ""):
+            # Older acceptance messages are history; they are not a prerequisite of this version.
+            live.update(status="Ready", stage="准备就绪，点击开始优选")
         if "mihomo" not in live:
             version_path = settings["runtime_dir"] / "version.json"
             version = json.loads(version_path.read_text(encoding="utf-8")).get("version", "") if version_path.exists() else ""
@@ -106,7 +110,7 @@ class BenchDashboard:
             self.log_handle.close()
             self.log_handle = None
         return {"live": live, "profile": profile, "rules": current_rules(settings), "published": health,
-                "running": bool(self.process and self.process.poll() is None),
+                "running": running,
                 "actions_url": f"https://github.com/{self.legacy.repository}/actions",
                 "cloud": cloud,
                 "can_resume": (settings["state_dir"] / "batch-state.json").exists()}
