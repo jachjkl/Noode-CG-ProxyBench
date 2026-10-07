@@ -43,3 +43,13 @@ A bounded real pipeline scan also completed 18 site probes for two candidates wh
 The suite contains 226 passing tests. Additional checks cover the exact `82.139.242.5:443#DE` text format, local-to-cloud text/order preservation, rejection of missing or inconsistent output text, Git-free source packaging, excluded private state, maintenance-archive inventory hashes, and the explicit build-cache allowlist.
 
 Browser checks confirm 30 moving background particles, 32 decorative particles on the hovered card, a visibly changing fluorescent selected-button effect, 300-row paging, no JavaScript errors, no desktop/mobile overflow, and reduced-motion handling. Repair-workspace preparation has been exercised with embedded Python and no Git checkout, and repeated preparation preserves source edits. The combined maintenance package contains both cloud source and local Windows packages; the personal variant remains local to the project directory.
+
+## Version 1.1.0 measured performance
+
+The user's recorded 1.0.2 run contained 1200 measured candidates. Of these, 619 completed all nine site requests but were rejected by the former 200 ms end-to-end threshold; their best mean was approximately 685 ms. This was a threshold/model problem, not evidence that every candidate was unusable.
+
+The corrected implementation screened 21,538 real saved candidate addresses in 128.875 seconds, retaining 1028 entries under the 200 ms local TCP limit. A separate 100-address screen took 1.218 seconds. A bounded 20-candidate authenticated proxy retest took 34.25 seconds and produced nine qualified candidates using production speed/site thresholds. Successful speed transfers retained named-candidate InName connection-chain evidence and never used DIRECT. This bounded test omitted exit-geography queries, so it is not evidence of a Japanese append set or complete 110-node publication.
+
+One independently exercised candidate measured approximately 110 ms at entry, 682 ms for a proxied Google request, and 7.583 Mbps for the 512 KiB download sample. A Cloudflare-range candidate also completed the alternative speed sample at 4.496 Mbps. These measurements use the owner's actual VLESS/WebSocket/TLS profile.
+
+There are 232 passing automated tests, including early rejection, separate entry/proxy response criteria, per-candidate listeners, preserved partial results, and reduced dashboard writes. The default Windows installation directory is beside the EXE; an explicit adjacent-install check is available for package verification.

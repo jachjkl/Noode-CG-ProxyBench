@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import concurrent.futures
 import copy
 import gzip
 import json
 import math
 import secrets
+import threading
+import time
 
 import yaml
 
@@ -14,6 +17,7 @@ from sources.pool import build
 
 from .benchmark import Benchmark, ranking_key
 from .controller import CoreError
+from .entry_probe import probe as entry_probe
 from .export import publish, recover
 from .mihomo_manager import MihomoManager
 from .profile import ProxyProfile, safe_error
@@ -63,18 +67,61 @@ class Pipeline:
         self.status = {}
         self.cloudflare_url = "https://cp.cloudflare.com/"
         self.incumbents = []
+        self.update_lock = threading.RLock()
+        self.last_flush = 0.0
 
     def update(self, **values) -> None:
-        self.status.update(values)
+        with self.update_lock:
+            changed = any(values.get(key) is not None and values[key] != self.status.get(key) for key in ("stage", "status"))
+            self.status.update(values)
+            if not changed and time.monotonic() - self.last_flush < 0.5:
+                return
+            self.last_flush = time.monotonic()
+            self.flush_update()
+
+    def flush_update(self) -> None:
         self.status["mihomo"] = self.manager.health()
         state = self.store.state
         self.status.update(candidate_total=len(state.get("pool", [])), tested_count=len(state.get("results", {})),
                            qualified_count=sum(x.get("qualified", False) for x in state.get("results", {}).values()),
-                           phase=state.get("phase", ""), cycle=state.get("cycle", 1), sources=state.get("sources", {}))
+                           phase=state.get("phase", ""), cycle=state.get("cycle", 1), sources=state.get("sources", {}),
+                           entry_screened_count=len(state.get("entry_results", {})),
+                           proxy_tested_count=sum(bool(row.get("proxy_probe_count")) for row in state.get("results", {}).values()))
         try:
             atomic_write_json(self.settings["state_dir"] / "live.json", self.status)
         except OSError:
             pass  # UI is best effort; checkpoint commits remain strict.
+
+    def screen_candidates(self, candidates: list[dict], *, result_field="results", refresh=False) -> list[dict]:
+        if not self.settings.get("fast_entry_screen"):
+            return candidates
+        rules = current_rules(self.settings)
+        self.store.state.setdefault(result_field, {}).update(self.store.partial)
+        screens = self.store.state.setdefault("entry_results", {})
+        remaining = candidates if refresh else [row for row in candidates if f"{row['ip']}:{row['port']}" not in screens]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=rules["entry_concurrency"]) as executor:
+            for offset in range(0, len(remaining), rules["entry_concurrency"]):
+                self.control.checkpoint()
+                self.update(stage="快速初筛候选入口端口", status="Running")
+                futures = {executor.submit(entry_probe, row, rules["entry_timeout_seconds"]): row for row in remaining[offset:offset + rules["entry_concurrency"]]}
+                for future in concurrent.futures.as_completed(futures):
+                    row = futures[future]
+                    screens[f"{row['ip']}:{row['port']}"] = future.result()
+                self.store.commit()
+                self.update(stage="快速初筛候选入口端口")
+        survivors = []
+        from datetime import UTC, datetime
+        for row in candidates:
+            key = f"{row['ip']}:{row['port']}"
+            result = screens[key]
+            row.update(result)
+            if result["entry_connected"] and result["entry_latency_ms"] <= rules["max_entry_latency_ms"]:
+                survivors.append(row)
+            elif refresh or key not in self.store.state.setdefault(result_field, {}):
+                self.store.state[result_field][key] = {**row, "key": key, "qualified": False, "status": "Rejected Entry",
+                                                  "proxy_probe_count": 0, "tested_at": datetime.now(UTC).isoformat()}
+        self.store.commit()
+        return sorted(survivors, key=lambda row: (not row.get("jp_hint", False), row["entry_latency_ms"], row["ip"]))
 
     def profiles(self, pool: list[dict], default: ProxyProfile) -> dict:
         profiles = {"default": default}
@@ -91,6 +138,8 @@ class Pipeline:
     def scan(self, candidates: list[dict], result_field: str, profiles: dict, *, fixed_rules: dict | None = None) -> None:
         state = self.store.state
         state.setdefault(result_field, {}).update(self.store.partial)
+        if fixed_rules is not None and self.settings.get("fast_entry_screen"):
+            candidates = self.screen_candidates(candidates, result_field=result_field, refresh=True)
         remaining = [item for item in candidates if f"{item['ip']}:{item['port']}" not in state[result_field]]
         batch_number = 0
         while remaining:
@@ -107,7 +156,7 @@ class Pipeline:
                     if not batch:
                         break
                     benchmark = Benchmark(self.manager, rules, self.control, geo_urls=self.settings["geo_urls"], update=self.update,
-                                          cloudflare_url=self.cloudflare_url)
+                                          cloudflare_url=self.cloudflare_url, speed_url=self.settings.get("speed_url", "https://dl.google.com/chrome/install/standalonesetup64.exe"))
                     def completed(result):
                         state[result_field][result["key"]] = result
                         self.store.save_partial(result)
@@ -163,6 +212,12 @@ class Pipeline:
                     state = {}
             if state and state.get("profile_fingerprint") != profile.fingerprint:
                 raise ValueError("Profile 已更改，不能混用旧测量；请开始新一轮")
+            if state and self.settings.get("fast_entry_screen") and state.get("measurement_policy") != "entry-proxy-v3":
+                if state.get("results"):
+                    atomic_write_bytes(self.settings["state_dir"] / "previous-policy-results.json.gz",
+                                       gzip.compress(json.dumps(state["results"]).encode(), mtime=0))
+                state.update(results={}, general_results={}, jp_results={}, entry_results={}, phase="scan", measurement_policy="entry-proxy-v3")
+                self.store.partial = {}
             self.control.path.unlink(missing_ok=True)
             self.store.state = state
             try:
@@ -175,7 +230,7 @@ class Pipeline:
                     pool, source_report = self.new_pool(profile, handoff)
                     state = {"run_id": secrets.token_hex(16), "pool": pool, "results": {}, "sources": source_report,
                              "phase": "scan", "cycle": 1, "profile_fingerprint": profile.fingerprint,
-                             "mihomo_version": self.manager.version}
+                             "mihomo_version": self.manager.version, "measurement_policy": "entry-proxy-v3"}
                     state.update(session_id=source_report.get("session_id", state["run_id"]),
                                  cycle=source_report.get("cycle", 1),
                                  previous_general=self.incumbent_candidates(profile, "general"),
@@ -197,7 +252,8 @@ class Pipeline:
                 while True:
                     profiles = self.profiles(state["pool"], profile)
                     if state["phase"] == "scan":
-                        self.scan(state["pool"], "results", profiles)
+                        candidates = self.screen_candidates(state["pool"])
+                        self.scan(candidates, "results", profiles)
                         state["phase"] = "general_retest"
                         state["competition_rules"] = current_rules(self.settings)
                         self.store.commit()

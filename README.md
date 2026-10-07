@@ -1,6 +1,6 @@
 # Noode-CG-ProxyBench
 
-An independent Cloudflare IP optimizer that measures real authenticated proxy traffic with an isolated Mihomo core. Every candidate becomes a distinct proxy node using the owner's actual Worker or EdgeTunnel configuration.
+An independent Cloudflare IP optimizer that measures real authenticated proxy traffic with an isolated Mihomo core. Surviving candidates become distinct proxy nodes using the owner's actual Worker or EdgeTunnel configuration.
 
 The Windows interface is Chinese. This README and the development documentation are English.
 
@@ -36,7 +36,7 @@ The main list shows 300 IPs per page and eight summary columns. Detailed measure
 
 Each batch loads at most 100 distinct proxies into one isolated Mihomo core. The core uses rule mode, loopback-only listeners, and no TUN interface. The application does not change the system proxy or terminate the user's existing Clash or Mihomo processes.
 
-Google, Cloudflare, and GitHub are tested for three rounds by default, producing nine candidate-specific probes. The defaults require zero failed requests and an average response time of at most 200 ms. Network speed now follows the original local installation package: one 512 KiB sample from the Cloudflare speed endpoint, at least 95% body completion, an 8-second I/O timeout, a 7-second body-time limit, and a default minimum of 3 Mbps. Timing begins after response headers. Each request explicitly passes through the selected candidate's rule-mode proxy. Response and speed thresholds are editable. There is no separate startup bandwidth acceptance gate; an individual speed failure rejects that IP and selection continues.
+Google, Cloudflare, and GitHub are tested for three rounds by default, producing nine candidate-specific probes. Fast selection first screens candidate TCP entry connections concurrently, with a default 200 ms entry limit and 1.2-second timeout. Surviving entries are ordered before authenticated proxy checks. Website requests still require zero failures, with a separate default mean limit of 2500 ms for the full Worker/relay chain. Network speed now follows the original local installation package: one 512 KiB sample from a non-Cloudflare download endpoint, at least 95% body completion, an 8-second I/O timeout, a 7-second body-time limit, and a default minimum of 3 Mbps. Timing begins after response headers. Each request explicitly passes through the selected candidate's dedicated loopback listener and rule-mode proxy. At most four speed requests run concurrently, without changing a shared selector. Candidates that can no longer meet the success rule skip further site requests. Response and speed thresholds are editable. There is no separate startup bandwidth acceptance gate; an individual speed failure rejects that IP and selection continues.
 
 Cloudflare uses `cp.cloudflare.com` first. If preflight fails there and succeeds at `www.cloudflare.com/cdn-cgi/trace`, the entire measurement run consistently uses the trace endpoint and records that choice.
 
@@ -94,3 +94,11 @@ The repository is public for source and candidate mirrors. Only the owner has re
 - [Windows packaging](docs/WINDOWS-PACKAGE.md)
 - [Project and maintenance structure](docs/PROJECT-STRUCTURE.md)
 - [Validation evidence](docs/VALIDATION.md)
+
+## EdgeTunnel fast-selection notes
+
+Version 1.1.0 separates local candidate-entry TCP timing from end-to-end proxy website timing. It avoids applying a 200 ms local-entry expectation to a complete Workers/Pages forwarding chain. Both fixed feeds remain complete; non-Cloudflare entries are labeled reverse-proxy candidates rather than official Cloudflare edges. Entry-only results cannot qualify for publication.
+
+The pinned upstream [cmliu/edgetunnel source](https://github.com/cmliu/edgetunnel/blob/af4f9837e1843e34159018713bc8749ccec3004d/_worker.js) treats `speed.cloudflare.com` and `cp.cloudflare.com` as special local-response domains in some paths. Worker [TCP restrictions](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/) also block direct outgoing sockets to Cloudflare ranges. The speed probe therefore uses a bounded 512 KiB HTTP range from Google's download service, through the candidate proxy, retaining body timing and route evidence. It does not accept a local 204 as a bandwidth result.
+
+The Windows EXE creates its `Noode-CG-ProxyBench` runtime folder next to the EXE. `--install-adjacent` exercises the same location without opening a window; explicit `--install-only PATH` remains available for packaging checks.

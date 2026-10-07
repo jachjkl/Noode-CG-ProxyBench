@@ -6,11 +6,12 @@ from pathlib import Path
 
 import yaml
 
-RULES = {"batch_size": 100, "round_count": 3, "max_proxy_average_latency_ms": 200.0,
+RULES = {"batch_size": 100, "round_count": 3, "max_proxy_average_latency_ms": 2500.0,
+         "max_entry_latency_ms": 200.0, "entry_timeout_seconds": 1.2, "entry_concurrency": 256,
          "max_proxy_loss_percent": 0.0, "min_proxy_speed_mbps": 3.0, "download_attempts": 1,
          "download_bytes": 524288, "minimum_completion_ratio": 0.95, "maximum_download_seconds": 7.0,
-         "request_timeout_seconds": 5.0,
-         "download_timeout_seconds": 8.0, "delay_concurrency": 20, "speed_concurrency": 1,
+         "request_timeout_seconds": 3.0,
+         "download_timeout_seconds": 8.0, "delay_concurrency": 60, "speed_concurrency": 4,
          "round_cooldown_seconds": 0.5}
 SITES = (("google", "https://www.gstatic.com/generate_204", "204"),
          ("cloudflare", "https://cp.cloudflare.com/", "200-399"),
@@ -21,7 +22,7 @@ def validate_rules(value: dict) -> dict:
     if not isinstance(value, dict) or set(value) - set(RULES):
         raise ValueError("未知的代理优选规则")
     rules = {**RULES, **value}
-    integers = {"batch_size", "round_count", "download_attempts", "download_bytes", "delay_concurrency", "speed_concurrency"}
+    integers = {"batch_size", "round_count", "download_attempts", "download_bytes", "delay_concurrency", "speed_concurrency", "entry_concurrency"}
     for key, number in rules.items():
         if isinstance(number, bool) or not isinstance(number, (int, float)) or not math.isfinite(number):
             raise ValueError(f"规则必须是有限数值：{key}")
@@ -33,8 +34,8 @@ def validate_rules(value: dict) -> dict:
         raise ValueError("Batch 最多 100，轮数和下载次数最多 10")
     if rules["max_proxy_loss_percent"] > 100 or rules["delay_concurrency"] > 100:
         raise ValueError("丢失率或并发超出范围")
-    if rules["speed_concurrency"] != 1:
-        raise ValueError("当前共享 selector 下载采用单并发，保证各节点公平且路由独立")
+    if rules["speed_concurrency"] > 8 or rules["entry_concurrency"] > 512 or rules["entry_timeout_seconds"] > 5:
+        raise ValueError("网速并发最多 8，入口初筛并发最多 512，入口连接超时最多 5 秒")
     if rules["download_bytes"] not in {524288, 1048576, 2097152, 4194304, 8388608}:
         raise ValueError("测速样本大小必须为 0.5/1/2/4/8 MiB")
     if not 0.95 <= rules["minimum_completion_ratio"] <= 1 or rules["maximum_download_seconds"] > 120:
@@ -55,6 +56,8 @@ def load_settings(config_path: str | Path) -> dict:
               "official_sample_count": int(block.get("official_sample_count", 10000)),
               "max_cycles": int(block.get("max_cycles", 0)), "sources": block.get("sources", {}),
               "auto_update": bool(block.get("auto_update", True)),
+              "fast_entry_screen": bool(block.get("fast_entry_screen", True)),
+              "speed_url": block.get("speed_url", "https://dl.google.com/chrome/install/standalonesetup64.exe"),
               "geo_urls": block.get("geo_urls", ["https://ipwho.is/", "https://api.country.is/"]),
               "rules": validate_rules(block.get("rules", {}))}
     if result["official_sample_count"] < 1 or not 0 <= result["max_cycles"] <= 30:
@@ -70,4 +73,9 @@ def current_rules(settings: dict) -> dict:
               "download_bytes": 2097152, "download_timeout_seconds": 15.0}
     if isinstance(saved, dict) and all(saved.get(key) == value for key, value in former.items()):
         saved = {**saved, **{key: RULES[key] for key in former}}
+    if isinstance(saved, dict):
+        for key, previous in {"max_proxy_average_latency_ms": 200.0, "request_timeout_seconds": 5.0,
+                              "delay_concurrency": 20, "speed_concurrency": 1}.items():
+            if saved.get(key) == previous:
+                saved[key] = RULES[key]
     return validate_rules({**settings["rules"], **saved})

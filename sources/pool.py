@@ -18,6 +18,10 @@ def build(settings: dict, port: int, excluded: set[str] | None = None, seed: str
     authorized_path = settings["root"] / "config/authorized-proxies.local.yaml"
     authorized = authorized_proxy_source.collect(authorized_path if authorized_path.exists() else None)
     records = merge([item for item in [*fixed, *official, *hints, *authorized] if item["ip"] not in excluded])
+    import ipaddress
+    for item in records:
+        if "authorized_proxy_candidate" not in item["source_types"] and not any(ipaddress.IPv4Address(item["ip"]) in network for network in networks):
+            item["source_types"] = [kind for kind in item["source_types"] if kind != "cloudflare_edge_candidate"] + ["reverse_proxy_candidate"]
     for index, item in enumerate(records, 1):
         item["proxy_name"] = f"PB-{index:06d}"
     report = {"seed": seed, "fixed_sources": fixed_counts, "fixed_fetched_this_round": include_fixed,

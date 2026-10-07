@@ -13,9 +13,10 @@ internal static class ProxyBenchSetup
     [STAThread]
     private static int Main(string[] args)
     {
-        string destination = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "软件", "Noode-CG-ProxyBench");
-        bool installOnly = args.Length == 2 && args[0] == "--install-only";
-        if (installOnly) destination = Path.GetFullPath(args[1]);
+        string destination = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "Noode-CG-ProxyBench");
+        bool explicitDestination = args.Length == 2 && args[0] == "--install-only";
+        bool installOnly = explicitDestination || (args.Length == 1 && args[0] == "--install-adjacent");
+        if (explicitDestination) destination = Path.GetFullPath(args[1]);
         if (installOnly)
         {
             try { Install(destination, delegate(int value) {}); return 0; }

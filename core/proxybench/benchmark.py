@@ -13,6 +13,7 @@ from .settings import SITES
 
 def ranking_key(result: dict) -> tuple:
     return (result.get("proxy_loss_percent", 100), -result.get("site_success_count", 0),
+            result.get("entry_latency_ms", math.inf),
             result["proxy_average_latency_ms"] if result.get("proxy_average_latency_ms") is not None else math.inf, result.get("latency_jitter_ms", math.inf),
             -result.get("proxy_download_average_mbps", 0), result["ip"], result["port"])
 
@@ -40,11 +41,13 @@ def calculate(result: dict, rules: dict) -> None:
 
 
 class Benchmark:
-    def __init__(self, manager, rules: dict, control, *, geo_urls: list[str], update=None, cloudflare_url="https://cp.cloudflare.com/") -> None:
+    def __init__(self, manager, rules: dict, control, *, geo_urls: list[str], update=None, cloudflare_url="https://cp.cloudflare.com/",
+                 speed_url="https://dl.google.com/chrome/install/standalonesetup64.exe") -> None:
         self.manager = manager
         self.rules = copy.deepcopy(rules)
         self.control = control
         self.geo_urls = geo_urls
+        self.speed_url = speed_url
         self.sites = tuple((site, cloudflare_url if site == "cloudflare" else url,
                             "200" if site == "cloudflare" and "/cdn-cgi/trace" in cloudflare_url else expected)
                            for site, url, expected in SITES)
@@ -85,51 +88,76 @@ class Benchmark:
                     for record in records.values():
                         record["status"] = f"Round {round_index + 1}"
                     self.update(stage=f"Round {round_index + 1}: {site}", candidates=list(records.values()))
-                    for offset in range(0, len(names), rules["delay_concurrency"]):
+                    pending = [name for name in names if not records[name].get("skip_reason")]
+                    for offset in range(0, len(pending), rules["delay_concurrency"]):
                         self.control.checkpoint()
                         futures = {executor.submit(self.manager.controller.delay, name, url, expected,
                                                    rules["request_timeout_seconds"]): name
-                                   for name in names[offset:offset + rules["delay_concurrency"]]}
+                                   for name in pending[offset:offset + rules["delay_concurrency"]]}
                         for future in concurrent.futures.as_completed(futures):
                             name = futures[future]
-                            records[name]["probes"][site].append(future.result())
+                            probe = future.result()
+                            records[name]["probes"][site].append(probe)
+                            seen = [item for values in records[name]["probes"].values() for item in values]
+                            if sum(not item["success"] for item in seen) / (rules["round_count"] * 3) * 100 > rules["max_proxy_loss_percent"]:
+                                records[name]["skip_reason"] = "前序请求失败，已无法满足成功率门槛"
+                    for name in names:
+                        if len(records[name]["probes"][site]) <= round_index:
+                            records[name]["probes"][site].append({"success": False, "latency_ms": None, "skipped": True,
+                                                                 "error": records[name].get("skip_reason", "提前结束")})
                 if round_index + 1 < rules["round_count"]:
                     time.sleep(rules["round_cooldown_seconds"])
+        pending_speed = []
         for name, result in records.items():
             self.control.checkpoint()
             calculate(result, rules)
+            result["proxy_probe_count"] = sum(not probe.get("skipped", False) for values in result["probes"].values() for probe in values)
             if not result["latency_passed"]:
                 result["status"] = "Rejected Loss" if result["proxy_loss_percent"] > rules["max_proxy_loss_percent"] else "Rejected Latency"
+                self.finish(result, completed)
             else:
                 result["status"] = "Latency Passed"
-                downloads = []
-                for _ in range(rules["download_attempts"]):
-                    self.control.checkpoint()
-                    result["status"] = "Speed Testing"
-                    self.update(stage="Speed Testing", candidates=list(records.values()))
-                    try:
-                        measurement = self.manager.controller.legacy_speed(name, f"https://speed.cloudflare.com/__down?bytes={rules['download_bytes']}",
-                                                                           timeout=rules["download_timeout_seconds"], wanted_bytes=rules["download_bytes"],
-                                                                           maximum_download_seconds=rules["maximum_download_seconds"],
-                                                                           minimum_completion_ratio=rules["minimum_completion_ratio"])
-                        measurement.pop("body", None)
-                        downloads.append(measurement)
-                    except Exception as exc:
-                        downloads.append({"success": False, "speed_mbps": 0.0, "error": safe_error(exc),
-                                          "stage": getattr(exc, "stage", "Proxy Request"),
-                                          "received_bytes": getattr(exc, "received", 0),
-                                          "cause": getattr(exc, "cause", type(exc).__name__),
-                                          **getattr(exc, "proof", {})})
-                speeds = [item["speed_mbps"] for item in downloads]
-                result.update(download_measurements=downloads, download_rounds_mbps=speeds,
-                              proxy_download_average_mbps=statistics.fmean(speeds), proxy_download_median_mbps=statistics.median(speeds),
-                              proxy_download_average_mbytes=statistics.fmean(speeds) / 8)
-                result["qualified"] = all(item["success"] for item in downloads) and statistics.fmean(speeds) >= rules["min_proxy_speed_mbps"]
-                result["status"] = "Qualified" if result["qualified"] else "Rejected Speed"
-                if result["qualified"]:
-                    result.update(self.geo(name))
-            from datetime import UTC, datetime
-            result["tested_at"] = datetime.now(UTC).isoformat()
-            completed(result)
-            self.update(candidates=list(records.values()))
+                pending_speed.append((name, result))
+        if pending_speed:
+            self.update(stage="Speed Testing", candidates=list(records.values()))
+            # Each production candidate has its own listener/rule, avoiding shared-selector races.
+            workers = rules["speed_concurrency"] if getattr(self.manager.controller, "named_ports", None) else 1
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {executor.submit(self.speed_result, name, result): name for name, result in pending_speed}
+                for future in concurrent.futures.as_completed(futures):
+                    name = futures[future]
+                    records[name] = future.result()
+                    self.finish(records[name], completed)
+                    self.update(candidates=list(records.values()))
         return list(records.values())
+
+    def finish(self, result: dict, completed) -> None:
+        from datetime import UTC, datetime
+        result["tested_at"] = datetime.now(UTC).isoformat()
+        completed(result)
+
+    def speed_result(self, name: str, record: dict) -> dict:
+        result = copy.deepcopy(record)
+        downloads = []
+        for _ in range(self.rules["download_attempts"]):
+            self.control.checkpoint()
+            try:
+                measurement = self.manager.controller.legacy_speed(name, self.speed_url,
+                    timeout=self.rules["download_timeout_seconds"], wanted_bytes=self.rules["download_bytes"],
+                    maximum_download_seconds=self.rules["maximum_download_seconds"],
+                    minimum_completion_ratio=self.rules["minimum_completion_ratio"])
+                measurement.pop("body", None)
+                downloads.append(measurement)
+            except Exception as exc:
+                downloads.append({"success": False, "speed_mbps": 0.0, "error": safe_error(exc),
+                                  "stage": getattr(exc, "stage", "Proxy Request"), "received_bytes": getattr(exc, "received", 0),
+                                  "cause": getattr(exc, "cause", type(exc).__name__), **getattr(exc, "proof", {})})
+        speeds = [item["speed_mbps"] for item in downloads]
+        result.update(download_measurements=downloads, download_rounds_mbps=speeds,
+                      proxy_download_average_mbps=statistics.fmean(speeds), proxy_download_median_mbps=statistics.median(speeds),
+                      proxy_download_average_mbytes=statistics.fmean(speeds) / 8)
+        result["qualified"] = all(item["success"] for item in downloads) and statistics.fmean(speeds) >= self.rules["min_proxy_speed_mbps"]
+        result["status"] = "Qualified" if result["qualified"] else "Rejected Speed"
+        if result["qualified"]:
+            result.update(self.geo(name))
+        return result

@@ -3,6 +3,7 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -38,6 +39,7 @@ class Controller:
         self.url = f"http://127.0.0.1:{port}"
         self._secret = secret
         self.mixed_port = mixed_port
+        self.named_ports = {}
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def call(self, path: str, method: str = "GET", data=None, timeout: float = 10):
@@ -61,9 +63,14 @@ class Controller:
         group = proxies.get("BENCHMARK-PROXY", {})
         if set(group.get("all", [])) != set(names):
             raise RoutingError("Benchmark group 包含错误节点或 fallback")
+        rules = self.call("/rules").get("rules", [])
         if not any(rule.get("type") == "InName" and rule.get("payload") == "proxybench-mixed"
-                   and rule.get("proxy") == "BENCHMARK-PROXY" for rule in self.call("/rules").get("rules", [])):
+                   and rule.get("proxy") == "BENCHMARK-PROXY" for rule in rules):
             raise RoutingError("Benchmark 入站规则缺失")
+        for index, name in enumerate(names):
+            if name in self.named_ports and not any(rule.get("type") == "InName" and rule.get("payload") == f"proxybench-node-{index}"
+                                                   and rule.get("proxy") == name for rule in rules):
+                raise RoutingError("独立节点入站规则不匹配，不能并发测速")
 
     def delay(self, name: str, url: str, expected: str, timeout: float) -> dict:
         query = urlencode({"url": url, "timeout": int(timeout * 1000), "expected": expected})
@@ -82,6 +89,12 @@ class Controller:
         self.call("/proxies/BENCHMARK-PROXY", "PUT", {"name": name})
         if self.call("/proxies/BENCHMARK-PROXY").get("now") != name:
             raise RoutingError("Selected Proxy 不匹配")
+
+    def request_port(self, name: str) -> int:
+        if name in self.named_ports:
+            return self.named_ports[name]
+        self.select(name)
+        return self.mixed_port
 
     def _connection_proof(self, name: str, source_port: int) -> dict:
         for _ in range(8):
@@ -103,7 +116,7 @@ class Controller:
         destination = urlsplit(url)
         if destination.scheme != "https" or destination.username or destination.password:
             raise ValueError("Benchmark endpoint 必须为 HTTPS")
-        self.select(name)
+        proxy_port = self.request_port(name)
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             source_port = sock.getsockname()[1]
@@ -113,7 +126,7 @@ class Controller:
         proof = {}
         try:
             command = [curl, "--disable", "--silent", "--show-error", "--noproxy", "", "--proxy",
-                       f"http://127.0.0.1:{self.mixed_port}", "--local-port", str(source_port),
+                       f"http://127.0.0.1:{proxy_port}", "--local-port", str(source_port),
                        "--connect-timeout", str(min(timeout, 10)), "--max-time", str(timeout),
                        "--max-filesize", str(wanted_bytes or 65536), "--output", temporary,
                        "--write-out", "%{http_code} %{size_download} %{time_starttransfer} %{time_total}", url]
@@ -152,8 +165,8 @@ class Controller:
         destination = urlsplit(url)
         if destination.scheme != "https" or destination.username or destination.password:
             raise ValueError("Benchmark endpoint 必须为 HTTPS")
-        self.select(name)
-        connection = http.client.HTTPSConnection("127.0.0.1", self.mixed_port, timeout=timeout,
+        proxy_port = self.request_port(name)
+        connection = http.client.HTTPSConnection("127.0.0.1", proxy_port, timeout=timeout,
                                                  context=make_ssl_context(True, "TLSv1.2"))
         connection.set_tunnel(destination.hostname, destination.port or 443)
         stage = "Connect/TLS"
@@ -169,12 +182,19 @@ class Controller:
             if destination.query:
                 path += "?" + destination.query
             stage = "HTTP Headers"
-            connection.request("GET", path, headers={"Host": destination.hostname,
+            headers = {"Host": destination.hostname,
                                "User-Agent": "Noode-CG-ProxyBench/1.0.1", "Accept": "application/octet-stream",
-                               "Accept-Encoding": "identity", "Connection": "close"})
+                               "Accept-Encoding": "identity", "Connection": "close"}
+            if destination.hostname != "speed.cloudflare.com":
+                headers["Range"] = f"bytes=0-{wanted_bytes - 1}"
+            connection.request("GET", path, headers=headers)
             response = connection.getresponse()
-            if response.status != 200:
+            if response.status not in {200, 206}:
                 raise ValueError("Benchmark endpoint 状态异常")
+            if response.status == 206:
+                content_range = re.fullmatch(r"bytes 0-(\d+)/(\d+|\*)", response.getheader("Content-Range", ""))
+                if not content_range or int(content_range[1]) != wanted_bytes - 1:
+                    raise ValueError("测速字节范围不匹配")
             stage = "HTTP Body"
             started = time.perf_counter()
             deadline = started + maximum_download_seconds
@@ -192,7 +212,7 @@ class Controller:
             if speed is None:
                 raise ValueError("测速正文不完整")
             return {**proof, "success": True, "http_status": response.status,
-                    "method": "legacy-proxy-speed", "wanted_bytes": wanted_bytes,
+                    "method": "legacy-proxy-speed", "destination": url, "wanted_bytes": wanted_bytes,
                     "received_bytes": received, "completion_ratio": received / wanted_bytes,
                     "minimum_completion_ratio": minimum_completion_ratio,
                     "seconds": elapsed, "speed_mbps": speed}

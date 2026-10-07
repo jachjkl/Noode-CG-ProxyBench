@@ -15,3 +15,13 @@ The network speed selector is serial to avoid cross-candidate routing races and 
 The Chinese interface shows eight summary columns and 300 rows per page. The detail dialog preserves the full site-by-round and network speed observations.
 
 Saved rules matching the former untouched 16 Mbps / three 2 MiB transfers / 15-second preset migrate to the original-package speed defaults. Independently edited response rules and customized speed thresholds are preserved.
+
+## Version 1.1.0 fast pipeline
+
+Entry screening performs bounded local TCP connects with default concurrency 256, timeout 1.2 seconds, and maximum entry latency 200 ms. It is a preliminary reachability test, not authenticated proxy traffic. Failed entries are excluded before loading proxies; successful entries remain subject to real site and speed checks.
+
+Authenticated site probes use up to 60 concurrent requests over three rounds. A candidate that can no longer satisfy its loss allowance stops making further requests; skipped observations are explicitly marked. Complete Worker website response time has a separate default limit of 2500 ms. Production ranking includes entry latency, then end-to-end response and stability. Final competitions refresh entry checks as well as proxy traffic.
+
+Speed uses a 512 KiB range request to https://dl.google.com/chrome/install/standalonesetup64.exe, with HTTP 200 or a matching HTTP 206 byte range. Named loopback listeners and InName rules isolate each node, allowing four concurrent speed/geo checks without selector races. Successful downloads must retain exact candidate connection-chain proof and the original minimum 95% body rule.
+
+Rule migration updates former untouched defaults while preserving other edits. Resuming a pre-1.1.0 run archives its former measurements and remeasures the same saved candidate pool under the corrected policy. Discovery-session exclusions remain unchanged. Dashboard progress writes are throttled, and repeated control checkpoints do not rewrite the full live snapshot.

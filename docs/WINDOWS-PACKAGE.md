@@ -2,7 +2,7 @@
 
 Build the public ZIP with `python scripts/build_windows_package.py` and its single-file EXE with `python scripts/build_windows_installer.py`. Add `--personal` to each command only for the owner-authorized local package containing the real profile. Personal packages must not be uploaded to public Releases.
 
-The package contains embedded Python, PyYAML, psutil, GitHub CLI, Mihomo, and Windows curl. The EXE extracts to the owner's Desktop software directory and opens the local window. ZIP users can launch `Start-ProxyBench.vbs`. Work begins after the user clicks the primary start button.
+The package contains embedded Python, PyYAML, psutil, GitHub CLI, Mihomo, and Windows curl. The EXE extracts to a Noode-CG-ProxyBench subdirectory beside the running EXE and opens the local window. ZIP users can launch `Start-ProxyBench.vbs`. Work begins after the user clicks the primary start button.
 
 Reinstallation preserves existing local profiles and state. Active cloud or core locks prevent replacement during a benchmark. Identical existing files are skipped, reducing replacement conflicts with loaded runtime files. The installer uses explicit UTF-8 compilation and validates archive paths.
 

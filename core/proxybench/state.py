@@ -98,6 +98,12 @@ class Control:
     def __init__(self, root: Path, update=None) -> None:
         self.path = root / "control.json"
         self.update = update or (lambda **_: None)
+        self.announced_status = None
+
+    def announce(self, status: str) -> None:
+        if status != self.announced_status:
+            self.announced_status = status
+            self.update(status=status)
 
     def checkpoint(self) -> None:
         while self.path.exists():
@@ -106,6 +112,6 @@ class Control:
                 raise Stopped
             if action != "pause":
                 return
-            self.update(status="Paused")
+            self.announce("Paused")
             time.sleep(0.2)
-        self.update(status="Running")
+        self.announce("Running")

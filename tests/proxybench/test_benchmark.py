@@ -31,7 +31,8 @@ class FakeController:
 
     def legacy_speed(self, name, url, **kwargs):
         self.speed_calls.append((name, url, kwargs))
-        return self.request(name, url, **kwargs)
+        return {"success": True, "speed_mbps": 24.0, "received_bytes": kwargs["wanted_bytes"],
+                "routing_proof": "connection-chain", "selected_proxy": name}
 
 
 class FakeManager:
@@ -80,7 +81,8 @@ class BenchmarkTests(unittest.TestCase):
         manager.controller.delay = failing
         with tempfile.TemporaryDirectory() as directory:
             results = Benchmark(manager, {**RULES, "round_cooldown_seconds": 0}, Control(Path(directory)), geo_urls=[]).batch(pool(1), object())
-        self.assertAlmostEqual(results[0]["proxy_loss_percent"], 100 / 9)
+        self.assertEqual(results[0]["proxy_loss_percent"], 100)
+        self.assertEqual(results[0]["proxy_probe_count"], 1)
         self.assertEqual(results[0]["status"], "Rejected Loss")
         self.assertEqual(results[0]["download_rounds_mbps"], [])
 
@@ -119,7 +121,7 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(result["proxy_average_latency_ms"], 105)
 
     def test_rules_reject_nan_unknown_and_unsafe_concurrency(self):
-        for invalid in ({"max_proxy_loss_percent": float("nan")}, {"batch_size": 101}, {"speed_concurrency": 5}, {"site_url": "https://x"}):
+        for invalid in ({"max_proxy_loss_percent": float("nan")}, {"batch_size": 101}, {"speed_concurrency": 9}, {"site_url": "https://x"}):
             with self.assertRaises(ValueError):
                 validate_rules(invalid)
 

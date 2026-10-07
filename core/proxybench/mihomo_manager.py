@@ -168,8 +168,18 @@ class MihomoManager:
 
     def config(self, candidates: list[dict], profile) -> dict:
         names = [item["proxy_name"] for item in candidates]
+        ports = self.controller.named_ports
+        for name in names:
+            if name not in ports:
+                port = free_port()
+                while port in {self.controller.mixed_port, int(self.controller.url.rsplit(":", 1)[1]), *ports.values()}:
+                    port = free_port()
+                ports[name] = port
+        self.controller.named_ports = {name: ports[name] for name in names}
+        dedicated = [{"name": f"proxybench-node-{index}", "type": "mixed", "listen": "127.0.0.1", "port": ports[name]}
+                     for index, name in enumerate(names)]
         return {"mixed-port": 0, "bind-address": "127.0.0.1", "allow-lan": False,
-                "listeners": [{"name": "proxybench-mixed", "type": "mixed", "listen": "127.0.0.1", "port": self.controller.mixed_port}],
+                "listeners": [{"name": "proxybench-mixed", "type": "mixed", "listen": "127.0.0.1", "port": self.controller.mixed_port}, *dedicated],
                 "mode": "rule", "log-level": "silent", "external-controller": self.controller.url[7:],
                 "secret": self.controller._secret, "tun": {"enable": False}, "ipv6": False,
                 "profile": {"store-selected": False}, "dns": {"enable": False},
@@ -177,7 +187,8 @@ class MihomoManager:
                             .definition(item["ip"], item["proxy_name"]) for item in candidates] if profile else [],
                 "proxy-groups": [{"name": "BENCHMARK-PROXY", "type": "select", "proxies": names or ["REJECT"]},
                                  {"name": "BENCHMARK-GROUP", "type": "select", "proxies": names or ["REJECT"]}],
-                "rules": ["IN-NAME,proxybench-mixed,BENCHMARK-PROXY", "MATCH,DIRECT"]}
+                "rules": [*(f"IN-NAME,proxybench-node-{index},{name}" for index, name in enumerate(names)),
+                          "IN-NAME,proxybench-mixed,BENCHMARK-PROXY", "MATCH,DIRECT"]}
 
     def start(self, candidates: list[dict], profile) -> None:
         self.stop()
