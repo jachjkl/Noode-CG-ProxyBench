@@ -70,7 +70,8 @@ command = Chr(34) & python & Chr(34) & " -X utf8 " & Chr(34) & main & Chr(34) & 
 shell.Run command, 0, False
 '''
     (distribution / "开始自动优选.vbs").write_text(vbs, encoding="utf-16")
-    (distribution / "开始自动优选.cmd").write_text('@echo off\r\nstart "" wscript.exe "%~dp0开始自动优选.vbs"\r\n', encoding="utf-8-sig")
+    (distribution / "Start-ProxyBench.vbs").write_text(vbs, encoding="utf-16")
+    (distribution / "开始自动优选.cmd").write_text('@echo off\r\nstart "" wscript.exe "%~dp0Start-ProxyBench.vbs"\r\n', encoding="ascii")
     (distribution / "运行说明.txt").write_text("解压到任意本地目录，双击【开始自动优选.vbs】。\n程序自动匹配本机 Worker 配置，启动独立 Runner，云端获取 IP，本地代理测试，交回云端发布。\n首次运行会下载独立 Runner。GitHub 使用你本机 jachjkl 的登录授权，鉴权信息不在此运行包中。\n没有可用节点配置时，窗口会提示导入。暂停和停止均保存状态；未通过 110 条门槛不会覆盖成功结果。\n", encoding="utf-8")
     archive_path = ROOT / "dist/Noode-CG-ProxyBench-Windows-1.0.0.zip"
     with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
