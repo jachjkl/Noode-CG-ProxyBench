@@ -1,9 +1,9 @@
-# Profile 自动导入
+# Proxy profiles
 
-自动读取当前用户的 Clash Party、Clash Verge、.config/mihomo、.config/clash，优先活动客户端和匹配 Worker 的 443 配置。不读取浏览器凭据或缓存。
+Automatic import reads the current user's known Clash Party, Clash Verge, Mihomo, and Clash configuration directories. Matching Worker configurations on port 443 and the active client receive priority. Browser credentials are not read.
 
-窗口支持 VLESS/Trojan/VMess 链接或 Mihomo 单节点 YAML。本机配置 config/proxy-profile.local.yaml，gitignore、发布、分发 ZIP 都排除。
+Import supports VLESS, Trojan, and VMess links and native single-node Mihomo YAML. The local file is `config/proxy-profile.local.yaml`. It is ignored by Git and excluded from public distributions. The explicitly requested owner-only installation package includes this file locally; that package is never a public release asset.
 
-支持 protocol、port、uuid/password、network、TLS、SNI、WS Host/path、ALPN、fingerprint 和原生 Mihomo 参数。每 Candidate 只替换 server 和内部 name，其他参数不变。
+Protocol, port, UUID or password, transport, TLS, SNI, WebSocket Host and path, ALPN, fingerprint, and native options remain immutable within a profile. Candidate construction changes only the server IP and internal name.
 
-格式有效不表示节点可用，实际验证三站与下载。缺失/无效立即“缺少可用代理协议配置”，不生成虚假 UUID，不回退 DIRECT。
+Syntax validation does not establish network usability. Real site and complete bandwidth probes must pass the 1/10/100 runtime acceptance gate. Missing or invalid configuration fails explicitly; the application neither invents authentication nor substitutes DIRECT traffic.

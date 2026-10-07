@@ -1,9 +1,9 @@
-# Mihomo 生命周期
+# Mihomo lifecycle
 
-官方 Stable，Windows AMD64 compatible，校验官方 asset SHA-256。更新只在任务开始前或结束后，运行中禁止升级。临时下载、旧 Core 备份、原子替换、启动和 Controller Health Check，失败回滚。
+The manager uses official stable release assets and verifies the published SHA-256. On Windows AMD64 it selects the compatible build. Core upgrades are forbidden during an active benchmark. Updates use temporary downloads, an old-binary backup, atomic replacement, startup health checks, and rollback on failure.
 
-随机 Controller secret、动态 loopback 端口、allow-lan false、rule mode、TUN false。named listener 的 IN-NAME 规则和 PB group 成员必须校验。Delay API 指定 PB，不共享默认 selector。
+Each owned session has a random controller secret and dynamic loopback ports. LAN access and TUN are disabled; rule mode is mandatory. The named inbound rule and exact benchmark-group membership are verified. Delay API calls specify their candidate outbound directly.
 
-下载与 Geo 串行选节点并读回确认；curl local-port 与 connection.sourcePort 对应，chain 必须含该 PB 且不含 DIRECT。
+Downloads and geography requests select a candidate serially and read the selection back. The curl source port must match a controller connection whose chain contains that candidate and excludes DIRECT. A missing or incorrect routing proof invalidates the measurement.
 
-正常退出停止自有 Core、删除临时 config/secret、释放端口。孤儿清理校验 exe 路径、PID 创建时间与 session 目录，不操作用户其他 Core。
+Normal exit stops only the owned core, removes its temporary configuration, clears its controller secret, and releases listeners. Orphan cleanup verifies executable identity, PID creation time, and the owned session directory before terminating a process. Other cores are left untouched.

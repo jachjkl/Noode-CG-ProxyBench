@@ -1,28 +1,9 @@
-# 候选下载与本地监控修复（2026-09-13）
+# Handoff download deadlines and integrity
 
-## 已定位的问题
+The historical downloader could exceed its nominal PowerShell timeout and stall before reaching a working mirror. The replacement uses an isolated Python orchestrator and curl with a per-address total deadline, a bounded connect timeout, and a parent-process timeout. Failure advances to the next source.
 
-运行 34752613448 在 18:44:14 开始下载官方 raw 文件，直到 18:49:58 才切到镜像；18:49:59 校验成功。原 PowerShell 请求的 90 秒参数没有约束本次请求的实际总耗时。另外控制器在 18:44:37 因运行日志被占用而退出。
+Every download must match the trusted workflow-provided SHA-256. Invalid or stale files never replace the existing handoff. Mirrors receive no GitHub credentials. Logs are written separately from the dashboard's managed process log to avoid multiple-writer file-sharing failures.
 
-## 修复
+Legacy regression coverage includes slow HTTP fallback, bad-digest rejection, preservation after complete source failure, and managed logging under Windows locks. Current ProxyBench adds more candidate mirrors and the authenticated runner channel. In the October validation run, ghfast.top returned the immutable candidate package in approximately four seconds with the expected digest.
 
-- PowerShell 保留入口，由独立 Python 下载器启动 curl。curl 总时限与父进程超时均为每地址 30 秒，超时终止该下载进程，再尝试下一地址；连接超时最多 10 秒。
-- 下载顺序：ghfast.top、gh.ddlc.top、cors.isteed.cc、cdn.jsdelivr.net、官方 raw、官方 GitHub raw 路由。一轮全部失败即报错，不无限轮询。
-- 所有内容都与云端工作流传入的可信 SHA-256 校验；失败不覆盖旧文件，不启动未校验数据的测速。镜像请求不发送 GitHub 认证信息。
-- 下载流程实时写入独立的 logs/local-flow-download-时间.log，并由面板现有中文日志视图读取。
-- 面板启动控制器时使用 ManagedLog 模式：PowerShell 仅输出日志，面板单进程加锁追加运行日志及 manual-last.log，避免多进程争用。独立启动 PowerShell 的写日志行为保留。
-- 工作流显示明确区分候选下载、本地直连检查、规则校验和网络测速。
-
-## 验证
-
-159 项自动测试通过。覆盖实际慢 HTTP 服务超时后切源、错误哈希拒绝、所有源失败时保留旧文件、多线程日志完整性，以及在日志被独占锁定时 PowerShell 托管模式仍可输出。
-
-使用 commit 622e726db2fb01b68849248f2992e6040c51e63e 的真实候选文件测试，上述四个镜像/CDN均下载成功并匹配可信哈希。其余尝试地址因证书验证错误或返回内容不匹配而未加入；未关闭 TLS 证书验证。镜像可用性是当次网络实测，不代表长期保证。
-
-本地安装版 PowerShell → Python → curl → 哈希校验 → 流程日志的实际调用链通过。测试使用临时目录，没有触发新一轮优选或发布。
-
-参考地址发现来源：
-- https://www.jsdelivr.com/?docs=gh
-- https://github.com/weekoo2025/Ghproxy
-
-未找到清华和阿里镜像站提供任意 GitHub 仓库文件反向代理的官方接口，未将其软件包镜像误用为候选下载代理。
+Successful observations describe that network attempt only; future mirror availability is checked on each request. TLS verification remains enabled.

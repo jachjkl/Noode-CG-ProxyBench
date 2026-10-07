@@ -1,57 +1,87 @@
 # Noode-CG-ProxyBench
 
-真实代理环境 Cloudflare Candidate Benchmark。每个候选 IP 使用你本机真实 Worker / EdgeTunnel 协议参数成为独立 Mihomo 节点，质量取决于该代理访问 Internet 的实际表现。
+An independent Cloudflare IP optimizer that measures real authenticated proxy traffic with an isolated Mihomo core. Every candidate becomes a distinct proxy node using the owner's actual Worker or EdgeTunnel configuration.
 
-基线：jachjkl/Noode-CG main 3bc8598b1b9e77cc38f7a54c9d75f5e3796fc058。恢复 Tag：baseline-noode-cg-v13.6.2。原仓库源码不参与本项目写入。
+The Windows interface is Chinese. This README and the development documentation are English.
 
-## Windows 双击运行
+## Windows application
 
-双击 Windows EXE，自动解包并打开本机网页窗口；也可下载 ZIP，解压后双击 **开始自动优选.vbs**。包内带 Python、PyYAML、psutil、GitHub CLI、curl 和 Mihomo。
+Run the Windows EXE to install and open the local application, then click the primary start button. Alternatively, extract the Windows ZIP and double-click `Start-ProxyBench.vbs`. Python, PyYAML, psutil, GitHub CLI, curl, and Mihomo are included.
 
-窗口打开后点击 **开始优选**，自动完成云端获取、本地测速、发布前新旧 IP 复测竞争与发布。界面以中文显示；IP 列表每页 300 个，测量明细点击查看。
+The application automatically connects these stages:
 
-[查看云端机器人：自动获取IP与本地真实代理优选](https://github.com/jachjkl/Noode-CG-ProxyBench/actions/workflows/proxybench.yml)。GitHub 页面手动运行默认只获取云端候选；软件开始优选会同时启动完整本地实测流程。
+1. Request a GitHub Actions run using the owner's local GitHub login.
+2. Fetch both configured feeds in full and sample 10,000 additional official Cloudflare IPv4 candidates.
+3. Download the immutable handoff through verified mirrors or the authenticated runner channel.
+4. Measure candidate-specific proxy access, response times, request success, and actual bandwidth on Windows.
+5. Retest current candidates against the previously published ordinary TOP100, select the best 100, and append 10 independently verified Japanese exits.
+6. Upload the allowlisted results to Ubuntu for final validation and publication.
 
-自动读取本机 Clash Party / Clash Verge / Mihomo 中匹配 Worker 的真实协议配置，准备专属于新仓库的 Windows Runner，衔接：
+[Open the cloud automation workflow](https://github.com/jachjkl/Noode-CG-ProxyBench/actions/workflows/proxybench.yml). A manual run from GitHub defaults to cloud discovery only. Starting optimization in the Windows application explicitly requests the complete local benchmark and publication workflow.
 
-**Ubuntu 获取候选 → 多镜像下载与 SHA-256 → Windows 真实代理优选 → Ubuntu 校验发布 → 本地确认 pending。**
+The first launch downloads and registers a separate application-owned Windows runner. GitHub authentication comes from the owner's local `jachjkl` login. The public package contains no personal proxy credentials. The separately prepared owner-only package includes the real local profile at the owner's request and is never uploaded to GitHub Releases.
 
-首次运行下载独立 Runner。GitHub 使用本机 jachjkl 登录授权。公开运行包不携带代理秘密；给所有者的本机专用包按其要求内置真实 Profile，保存在本机，不上传 Release。没有可用配置时可自动读取或导入已有节点链接。不修改系统代理，不关闭已有 Clash/Mihomo。
+The main list shows 300 IPs per page and eight summary columns. Detailed measurements are available in a dialog. The application starts work after the user clicks the start button.
 
-## 默认测试规则
+## Discovery and replenishment
 
-- 两个固定链接每次打开的会话只全量读取一次，官方 IPv4 范围每轮额外取 10,000 个唯一候选，JP Supplemental 另计并验证官方范围。
-- 默认持续自动补测，直到普通 100 个＋日本 10 个通过最终复测，或停止、来源用尽。云端会话历史排除所有已交接 IP，包括尚未实测的候选。继续测试复用断点；继续获取 IP 请求新的 10,000 个边缘 IP，固定链接不会重复获取。
-- 每 Batch 默认 100 个 IP；一个独立 Mihomo Core 一次加载最多 100 个独立 Proxy。
-- Google、Cloudflare、GitHub 三站连续三轮，共九次实际 Proxy Site Probe。
-- 默认平均延迟 <=200ms、请求丢失 0%、三次 2MiB 完整代理下载平均 >=16Mbps（2MB/s）。下载单并发防止带宽竞争和 selector 竞态。
-- Cloudflare 优先 cp.cloudflare.com；预检确认 cp 失败且 trace 可用时，整轮统一使用允许的 www.cloudflare.com/cdn-cgi/trace，实际端点写入记录。
-- 普通候选前 200 与 GitHub 上次普通 100 个全部复测竞争，统一排序选前 100。日本候选独立复测，额外追加 10 个不同 IP。复测失败即取消该候选合格状态，后续新候选可继续竞争。
-- 发布严格要求 100+10+110 个唯一 IP，不足时保留 Last Good 并继续刷新周期。
-- Dashboard 修改规则下一 Batch 生效。Pause/Stop 保存状态，Resume 继续未完成批次。
+- Each application window has its own session identity. Starting after reopening the window fetches both complete feeds again for the new session.
+- Within one session, the two fixed feeds are fetched only once. Subsequent automatic replenishment or manual continuation requests a fresh 10,000-address official edge sample.
+- Cloud history excludes every previously handed-off IP, including untested candidates and optional-source candidates. No later round reintroduces an earlier candidate IP.
+- Downloaded candidates are accumulated locally before proxy validation. Failed validation does not discard the first complete pool when another handoff arrives.
+- Replenishment continues until 100 ordinary candidates and 10 additional Japanese exits pass final retesting, unless stopped or the sources are exhausted. `max_cycles: 0` enables this default behavior; a positive value sets an explicit limit.
+- Resume uses saved batches. Continue fetching requests fresh candidates while retaining completed measurements and the current session's exclusion history.
 
-首次大池扫描前必须完成真实 1→10→100 路径验收。失败不解锁 20,000+ 正式扫描。
+## Measurement and publication rules
 
-## 结果与秘密
+Each batch loads at most 100 distinct proxies into one isolated Mihomo core. The core uses rule mode, loopback-only listeners, and no TUN interface. The application does not change the system proxy or terminate the user's existing Clash or Mihomo processes.
 
-输出 nodes.txt、nodes.json、nodes.csv、api.json、ip.zip、health.json。真实 Profile、授权代理本机配置、runtime、Controller secret 不上传 GitHub，不进入公开分发 ZIP。专用 ZIP 仅按所有者要求在本机加入 Profile。Rule Mode、TUN 关闭、随机 loopback 端口。下载和 Geo 必须有正确 Candidate 的连接链证据，DIRECT 或错误节点结果无效。
+Google, Cloudflare, and GitHub are tested for three rounds by default, producing nine candidate-specific probes. The defaults require zero failed requests and an average response time of at most 200 ms. Candidates passing these checks receive three complete 2 MiB proxy transfers from the Cloudflare bandwidth endpoint, with an average of at least 16 Mbps, equivalent to 2 MB/s. Response and bandwidth thresholds are editable.
 
-仓库公开仅提供源码和公开 IP 数据。代码写入账户仅 jachjkl；GitHub Actions 由所有者授权发布。
+Cloudflare uses `cp.cloudflare.com` first. If preflight fails there and succeeds at `www.cloudflare.com/cdn-cgi/trace`, the entire measurement run consistently uses the trace endpoint and records that choice.
 
-## 开发命令
+The current ordinary shortlist and all previously published ordinary TOP100 nodes compete in a fresh retest. Failed retests revoke stale qualification, allowing newly measured candidates into later competitions. Japanese append candidates are independently retested and must have verified Japanese exit geography. Source labels alone never establish Japanese eligibility.
+
+Publication requires exactly 100 ordinary nodes followed by 10 additional Japanese nodes, with 110 unique IPs. Every publication uses the same ranking policy and retested measurements. Insufficient results preserve the previous successful files and trigger replenishment.
+
+Outputs: `nodes.txt`, `nodes.json`, `nodes.csv`, `api.json`, `ip.zip`, and `health.json`. The text format is `IP:port#country`, with the Japanese append lane occupying the final ten lines.
+
+## Validation status
+
+Automated checks pass, including candidate paging, independent batch probes, checkpoint recovery, incumbent competition, failed-retest replacement, and continuous replenishment. Real cloud discovery produced 21,537 candidates in the first round and 10,000 new IPs in each of the next two rounds, with no overlap.
+
+Real authenticated proxy traffic has been exercised, including 100 independently loaded nodes and 900 site probes. The available Worker profile has **not passed the required bandwidth acceptance test**, so the formal large-pool scan and a real 100+10 publication remain gated. The package includes the actual local configuration, but configuration syntax validity does not guarantee that its upstream proxy can complete the bandwidth transfer. See [validation evidence and limitations](docs/VALIDATION.md).
+
+## Development
 
 ```powershell
 python -m pip install -r requirements-dev.txt
 python main.py validate
 python main.py validate-profile
 python main.py validate-runtime
-python main.py dashboard --auto-start
-python main.py run
+python main.py dashboard
+python main.py auto-cloud
 python main.py resume
 python -m unittest discover -s tests -v
-ruff check .
+python -m ruff check .
+python scripts/build_windows_package.py
+python scripts/build_windows_installer.py
 ```
 
-run 是本机流水线；双击入口默认云端交接全流程。CI 不执行真实代理测量。旧直连模块保留用于基线恢复，不是正式入口；原工作流在 docs/legacy/update.yml。
+Cloud preparation uses `prepare-handoff`; downloaded pools are persisted with `stage-handoff`; the runner executes `local-select`. CI uses deterministic fixtures and does not substitute mocked measurements for real network acceptance.
 
-文档：ARCHITECTURE-PROXYBENCH、CANDIDATE-SOURCES、MIHOMO、PROXY-PROFILE、BENCHMARK-METHODOLOGY、JP-SELECTION、RECOVERY、WINDOWS-PACKAGE。
+Baseline: `jachjkl/Noode-CG` main commit `3bc8598b1b9e77cc38f7a54c9d75f5e3796fc058`. Recovery tag: `baseline-noode-cg-v13.6.2`. This project writes only to the independent `Noode-CG-ProxyBench` repository. The original repository's source and published outputs remain unchanged.
+
+The repository is public for source and candidate mirrors. Only the owner has repository write access; owner-authorized Actions publish generated data. Local profiles, controller secrets, runner registration, and private packages are excluded from public artifacts.
+
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE-PROXYBENCH.md)
+- [Candidate sources](docs/CANDIDATE-SOURCES.md)
+- [Mihomo lifecycle](docs/MIHOMO.md)
+- [Proxy profiles](docs/PROXY-PROFILE.md)
+- [Benchmark methodology](docs/BENCHMARK-METHODOLOGY.md)
+- [Japanese append selection](docs/JP-SELECTION.md)
+- [Recovery and checkpoints](docs/RECOVERY.md)
+- [Windows packaging](docs/WINDOWS-PACKAGE.md)
+- [Validation evidence](docs/VALIDATION.md)

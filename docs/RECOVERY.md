@@ -1,11 +1,11 @@
-# 续测与恢复
+# Checkpoints and recovery
 
-batch-state.json 指向 SHA-256 校验的 generation gzip 快照，是 pool/results/phase/cycle 事务边界。每批先写快照，再原子改指针，保留最近几代。attempted/qualified/results 是派生检查视图。
+`batch-state.json` points to a SHA-256-verified generation snapshot. The snapshot is the transaction boundary for pools, results, phase, and cycle. Commits write the new compressed snapshot before replacing the pointer and retain recent generations. Attempted, qualified, and result files are inspectable derivative views.
 
-已完成 Candidate 保存 partial-batch.json，run_id/phase 匹配后合并；未完成重测，完成不重测。Core 崩溃重启并重试未完成输入，前批次保留。
+Completed candidates are recorded in `partial-batch.json` and restored only when run identity and phase match. Finished candidates are skipped on resume; unfinished candidates are retried. An owned core crash can restart the current unfinished work while preserving completed batches.
 
-Pause 有界小步骤后等待，Resume 移除 pause 标记，Stop 保存并清理自有 Core。规则下一批生效，竞赛锁同一规则。Profile 更改拒绝混合旧数据。
+The cumulative cloud candidate queue is saved before profile acceptance, so failed validation does not erase untested first-round inputs. Starting in a new window creates a new discovery session; explicit resume retains the saved session and handoff.
 
-输出与 health 有发布事务恢复。Windows pending 保存确切包和摘要，重发同一内容，只收到相同摘要的 Ubuntu 成功确认才删除 pending，不删除 checkpoint。
+Pause waits at bounded checkpoints. Resume removes the pause marker; stop saves state and cleans up the owned core. Rule changes apply to the next batch, while final competitors use one captured ruleset. Measurements from different profile fingerprints cannot be mixed.
 
-核心来源失败停止周期，JP可选来源失败 warning。错误和不足不能覆盖 Last Good。
+Output replacement has a durable publication transaction backup. A Windows pending archive stores the exact bytes and digest for retry. Only Ubuntu confirmation of the same digest removes that pending payload; checkpoints remain. Source failures, runtime errors, and insufficient qualification never replace the last successful subscription.

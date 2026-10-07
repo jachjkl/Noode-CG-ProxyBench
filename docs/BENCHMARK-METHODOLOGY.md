@@ -1,11 +1,13 @@
-# 实测方法
+# Benchmark methodology
 
-默认 Google=gstatic generate_204（204），Cloudflare=cp.cloudflare.com（200–399），GitHub=github.com（200–399）。Cloudflare 预检 cp 失败而 trace 成功时全轮统一 trace（200），记录 URL。
+Default sites are Google gstatic generate_204 (204), Cloudflare cp.cloudflare.com (200-399), and GitHub (200-399). If Cloudflare preflight fails at cp but succeeds at the permitted trace endpoint, the whole run consistently uses trace (200) and records the selected URL.
 
-每 round 全批次完成三个网站再 barrier，默认三轮。保存九次、站点平均、round 平均、总平均。Loss=失败/(rounds×3)。放宽门槛时失败按 timeout 延迟计入平均，失败样本不删除。
+Every round completes the three sites across the batch before the next round starts. The default is three rounds, giving nine candidate-specific probes. Records include each observation, site means, round means, the final mean, jitter, and variance. Request loss is failed probes divided by the total probe count. Failed observations contribute the configured timeout to means when relaxed loss rules are used.
 
-默认 loss=0%、平均<=200ms，通过后同一 Candidate 三次 2MiB Cloudflare Speed 下载，正文完整、状态正确、routing proof 必须满足。平均和中位数保存，平均>=16Mbps=2MB/s。MiB 是文件大小，MB 是十进制字节速度。
+Default ordinary gates are zero loss and a final mean no greater than 200 ms. Passing candidates receive three complete 2 MiB transfers from `https://speed.cloudflare.com/__down`. HTTP status, full byte count, and candidate routing evidence are mandatory. The arithmetic mean must be at least 16 Mbps, equal to 2 MB/s. MiB describes transfer size; MB/s is decimal throughput. Payload time excludes time to first byte. Failed or partial transfers cannot qualify.
 
-排名：loss、成功数、平均延迟、round 抖动、下载速度、IP/port 稳定 tie-break。来源和 JP hint 不覆盖实测。
+Ranking considers request loss, successful probes, mean response time, round jitter, bandwidth, and stable IP/port tie breakers. Current shortlisted nodes and all old ordinary TOP100 nodes are measured again before ranking. Failed competition measurements revoke stale qualification.
 
-1/10/100 路径验收使用明确记录的诊断阈值验证传输；正式优选仍使用用户保存的生产规则。路径验收失败不解锁大池。
+The bandwidth selector is serial to avoid cross-candidate routing races and test-generated bandwidth competition. Production thresholds remain user-controlled. Runtime acceptance records explicitly looser diagnostic thresholds and does not modify production rules or manufacture passing measurements.
+
+The Chinese interface shows eight summary columns and 300 rows per page. The detail dialog preserves the full site-by-round and bandwidth observations.

@@ -4,6 +4,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Diagnostics;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -18,7 +19,11 @@ internal static class ProxyBenchSetup
         if (installOnly)
         {
             try { Install(destination, delegate(int value) {}); return 0; }
-            catch { return 2; }
+            catch (Exception error)
+            {
+                try { File.WriteAllText(Path.Combine(destination, "install-error.txt"), error.GetType().Name + ": " + error.Message + "\n" + error.Data["relative_file"]); } catch {}
+                return 2;
+            }
         }
         Application.EnableVisualStyles();
         using (Form window = new Form())
@@ -89,12 +94,26 @@ internal static class ProxyBenchSetup
                     string temporary = target + ".install-new";
                     using (Stream source = entry.Open())
                     using (FileStream file = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None)) source.CopyTo(file);
-                    if (File.Exists(target)) File.Replace(temporary, target, null);
-                    else File.Move(temporary, target);
+                    try
+                    {
+                        if (File.Exists(target) && EqualFile(temporary, target)) File.Delete(temporary);
+                        else if (File.Exists(target)) File.Replace(temporary, target, null);
+                        else File.Move(temporary, target);
+                    }
+                    catch (Exception error) { error.Data["relative_file"] = relative; throw; }
                 }
                 progress(++index * 100 / archive.Entries.Count);
             }
         }
         progress(100);
+    }
+
+    private static bool EqualFile(string first, string second)
+    {
+        if (new FileInfo(first).Length != new FileInfo(second).Length) return false;
+        using (SHA256 algorithm = SHA256.Create())
+        using (FileStream left = File.OpenRead(first))
+        using (FileStream right = File.OpenRead(second))
+            return Convert.ToBase64String(algorithm.ComputeHash(left)) == Convert.ToBase64String(algorithm.ComputeHash(right));
     }
 }

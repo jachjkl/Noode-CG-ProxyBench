@@ -7,7 +7,6 @@ import secrets
 import shutil
 import socket
 import subprocess
-import sys
 import time
 import zipfile
 from datetime import UTC, datetime
@@ -15,6 +14,7 @@ from pathlib import Path
 
 from core.io_utils import atomic_write_json
 
+from .execution import cli_python
 from .profile import ProxyProfile, discover_profiles, import_discovered, safe_error
 from .state import Control, RunLock, Stopped, Store
 
@@ -97,7 +97,7 @@ class CloudController:
                 raise CloudError("独立 Runner 注册失败")
         log_path = self.root / "runtime/runner-console.log"
         self.log = log_path.open("wb")
-        env = {**os.environ, "NOODE_PROXYBENCH_APP": str(self.root), "NOODE_PROXYBENCH_PYTHON": sys.executable,
+        env = {**os.environ, "NOODE_PROXYBENCH_APP": str(self.root), "NOODE_PROXYBENCH_PYTHON": cli_python(),
                "NOODE_LOCAL_ROOT": str(self.root), "PYTHONUTF8": "1"}
         if self.gh:
             env["PATH"] = str(Path(self.gh).parent) + os.pathsep + env.get("PATH", "")

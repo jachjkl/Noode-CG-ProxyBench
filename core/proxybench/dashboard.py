@@ -4,11 +4,11 @@ import gzip
 import json
 import secrets
 import subprocess
-import sys
 import threading
 
 from core.io_utils import atomic_write_json
 
+from .execution import cli_python
 from .profile import ProxyProfile, discover_profiles, import_discovered, save_import
 from .settings import current_rules, load_settings, validate_rules
 
@@ -163,7 +163,7 @@ class BenchDashboard:
                 self.log_handle = log_path.open("ab")
                 env = dict(__import__("os").environ)
                 env["PYTHONUTF8"] = "1"
-                self.process = subprocess.Popen([sys.executable, "-X", "utf8", str(self.app / "main.py"), "--config", str(self.app / "config.yaml"), command, *arguments],
+                self.process = subprocess.Popen([cli_python(), "-X", "utf8", str(self.app / "main.py"), "--config", str(self.app / "config.yaml"), command, *arguments],
                                                 cwd=self.app, stdout=self.log_handle, stderr=self.log_handle,
                                                 env=env,
                                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))

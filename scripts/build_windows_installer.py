@@ -14,7 +14,7 @@ def build(personal: bool = False) -> Path:
     archive = ROOT / "dist" / (filename + ".zip")
     destination = ROOT / "dist" / (filename + ".exe")
     framework = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Microsoft.NET/Framework64/v4.0.30319"
-    subprocess.run([str(framework / "csc.exe"), "/nologo", "/target:winexe", "/optimize+",
+    subprocess.run([str(framework / "csc.exe"), "/nologo", "/codepage:65001", "/target:winexe", "/optimize+",
                     "/reference:System.Windows.Forms.dll", "/reference:System.Drawing.dll",
                     f"/reference:{framework / 'System.IO.Compression.dll'}",
                     f"/resource:{archive},ProxyBenchPackage", f"/out:{destination}",

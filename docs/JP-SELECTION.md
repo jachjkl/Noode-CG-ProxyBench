@@ -1,7 +1,9 @@
-# General100 + JP10
+# Ordinary TOP100 and Japanese append TOP10
 
-所有 Qualified 同一延迟/丢失/速度规则。JP hint 不是结果；合格后通过当前 Candidate 查询 ipwho.is、api.country.is，至少一个有效国家代码，两个有效结果冲突则 geo_conflict，不入 JP append。
+All qualified candidates use the same response, request-loss, and bandwidth gates. Japanese source hints are discovery metadata, not results. Geography is requested through the same candidate using ipwho.is and api.country.is. At least one valid country code is required; conflicting valid observations disqualify the Japanese append lane.
 
-General200 统一复测选 General100；从其余 JP Qualified 初选20再复测，不足时补后续 JP20。JP 与 General 不重复。
+The ordinary current shortlist and the previous published ordinary TOP100 compete in uniform retests. Ranking selects the best 100 ordinary candidates. Remaining eligible Japanese candidates and previous Japanese append entries are separately retested in small groups until ten pass or the available set is exhausted.
 
-最终100 general +10 jp_append，rank1–110，JP最后十条，IP唯一。不足不降低标准，needs_more 保留 Last Good。CF 入口 hint 不保证 Worker 出口为 JP。
+Final output contains 100 `general` records followed by ten `jp_append` records, ranked 1 through 110. All IPs are unique. Japanese append entries must have verified JP geography and cannot overlap the ordinary lane. Insufficient results preserve the last successful publication and request fresh edge candidates without reducing quality thresholds.
+
+An ingress IP's label or Cloudflare range does not establish the Worker's exit country.
