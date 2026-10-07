@@ -29,7 +29,8 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--port", type=int, default=13337)
     dashboard.add_argument("--no-browser", action="store_true")
     dashboard.add_argument("--auto-start", action="store_true")
-    subparsers.add_parser("auto-cloud", help="自动匹配代理、启动独立执行器、云端发现、本地实测和云端发布")
+    automatic = subparsers.add_parser("auto-cloud", help="自动匹配代理、启动独立执行器、云端发现、本地实测和云端发布")
+    automatic.add_argument("--mode", choices=["auto", "resume", "continue"], default="auto")
     server = subparsers.add_parser("serve", help="启动只读 HTTP API")
     server.add_argument("--host", default="127.0.0.1")
     server.add_argument("--port", type=int, default=8080)
@@ -67,10 +68,11 @@ def main(argv: list[str] | None = None) -> int:
             return serve_dashboard(settings["root"], "127.0.0.1", args.port, "jachjkl/Noode-CG-ProxyBench", "main", args.auto_start, not args.no_browser)
         if command == "auto-cloud":
             from core.proxybench.cloud import CloudController
-            report = CloudController(settings).run()
+            report = CloudController(settings).run(args.mode)
         elif command == "prepare-handoff":
             import os
-            report = prepare(settings, os.getenv("NOODE_CONTINUATION", "false").lower() == "true")
+            report = prepare(settings, os.getenv("NOODE_CONTINUATION", "false").lower() == "true",
+                             os.getenv("NOODE_SESSION_ID", ""), os.getenv("NOODE_REUSE_HANDOFF", "false").lower() == "true")
         elif command == "local-select":
             report = Pipeline(settings).run(resume=True, handoff=True)
         elif command == "validate-runtime":

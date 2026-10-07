@@ -74,7 +74,7 @@ def emit_outputs(content: bytes, kind: str, root: Path) -> None:
         import io
         with zipfile.ZipFile(io.BytesIO(content)) as package:
             health = json.loads(package.read("output/health.json"))
-        values["needs_more"] = str(bool(health.get("needs_more")) and int(health.get("cycle", 30)) < 30).lower()
+        values["needs_more"] = str(bool(health.get("needs_more"))).lower()
     output = Path(os.environ["GITHUB_OUTPUT"])
     with output.open("a", encoding="utf-8") as handle:
         for key, value in values.items():

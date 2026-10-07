@@ -1,7 +1,7 @@
 proxybench:
   profile_path: config/proxy-profile.local.yaml
   official_sample_count: 10000
-  max_cycles: 30
+  max_cycles: 3
   auto_update: true
   sources:
     jp_supplemental:

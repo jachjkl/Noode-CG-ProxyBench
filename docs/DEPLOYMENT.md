@@ -1,5 +1,7 @@
 # V13.6.2 部署说明
 
+此文档保留原仓库部署方式。当前独立 ProxyBench 使用自动运行的便携窗口与独立执行器，不需要按此文档手工配置服务；请使用 [WINDOWS-PACKAGE.md](WINDOWS-PACKAGE.md)。
+
 ## 1. 上传代码包
 
 1. 解压 `Noode-CG-V13.6.2-ConcurrencyFix.zip`。

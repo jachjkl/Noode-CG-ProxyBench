@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import secrets
 import subprocess
 import sys
 import threading
@@ -22,6 +23,7 @@ class BenchDashboard:
         self.process = None
         self.lock = threading.RLock()
         self.log_handle = None
+        atomic_write_json(self.settings["state_dir"] / "session.json", {"session_id": secrets.token_hex(16)})
 
     def snapshot(self) -> dict:
         settings = self.settings
@@ -89,18 +91,19 @@ class BenchDashboard:
                 if chosen is None:
                     raise ValueError("未找到匹配配置，请导入现有节点链接")
                 return import_discovered(chosen, settings["profile"])
-            if action in {"start", "resume", "validate", "auto-start"}:
+            if action in {"start", "resume", "continue-fetch", "validate", "auto-start"}:
                 if running:
                     raise ValueError("已有任务正在运行")
                 if action != "auto-start":
                     ProxyProfile.load(settings["profile"])
-                command = {"start": "auto-cloud", "resume": "resume", "validate": "validate-runtime", "auto-start": "auto-cloud"}[action]
+                command = "validate-runtime" if action == "validate" else "auto-cloud"
+                arguments = ["--mode", "continue" if action == "continue-fetch" else "resume"] if action in {"resume", "continue-fetch"} else []
                 log_path = self.root / "logs/proxybench.log"
                 log_path.parent.mkdir(parents=True, exist_ok=True)
                 self.log_handle = log_path.open("ab")
                 env = dict(__import__("os").environ)
                 env["PYTHONUTF8"] = "1"
-                self.process = subprocess.Popen([sys.executable, "-X", "utf8", str(self.app / "main.py"), "--config", str(self.app / "config.yaml"), command],
+                self.process = subprocess.Popen([sys.executable, "-X", "utf8", str(self.app / "main.py"), "--config", str(self.app / "config.yaml"), command, *arguments],
                                                 cwd=self.app, stdout=self.log_handle, stderr=self.log_handle,
                                                 env=env,
                                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))

@@ -9,3 +9,7 @@ Windows Profile + Candidate IP 生成 PB 节点，专用 mixed listener 以 IN-N
 批次提交事务性 checkpoint。最后统一复测 General200 与独立 JP20，严格选 110。白名单 ZIP、digest、Base64 分块交给 Ubuntu 再校验并提交，仅对应摘要确认后清理 pending。
 
 Runner 注册和目录仅属于新仓库，原仓库 Runner、安装目录、Office 插件和系统代理保持原状。
+
+自动控制器为每次打开分配 session_id；未完成的批次继续使用原会话。云端保存全部候选 IP 历史，固定来源只在首次抓取，之后所有来源均排除历史。控制器等待 Ubuntu 确认发布并保留 Runner，再请求下一轮；每次操作自动最多三轮。
+
+发布前普通候选前 200 与旧普通 TOP100 全部重新实测竞争，旧日本追加项走单独 JP 复测。110 条最终通过后，节点文本格式保持 IP:port#country。

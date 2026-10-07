@@ -21,16 +21,34 @@ from .settings import current_rules
 from .state import Control, RunLock, Stopped, Store
 
 
-def prepare(settings: dict, continuation: bool = False) -> dict:
-    excluded = set()
-    prior_path = settings["root"] / "data/handoff/proxybench-attempted.json.gz"
-    if continuation and prior_path.exists():
-        excluded = set(json.loads(gzip.decompress(prior_path.read_bytes())))
-    # Cloud does not need or receive the local Profile. The local stage normalizes port from the Profile.
-    pool, report = build(settings, 443, excluded)
-    report["continuation"] = continuation
+def prepare(settings: dict, continuation: bool = False, session_id: str = "", reuse: bool = False) -> dict:
     destination = settings["root"] / "data/handoff/proxybench-pool.json.gz"
-    atomic_write_bytes(destination, gzip.compress(json.dumps({"schema": 1, "pool": pool, "report": report}).encode(), mtime=0))
+    if reuse:
+        payload = json.loads(gzip.decompress(destination.read_bytes()))
+        if session_id and payload["report"].get("session_id") != session_id:
+            raise ValueError("云端交接与本机断点不属于同一会话")
+        return payload["report"]
+    history_path = destination.with_name("proxybench-session-history.json.gz")
+    history = json.loads(gzip.decompress(history_path.read_bytes())) if history_path.exists() else {}
+    if not session_id:
+        session_id = history.get("session_id", "") if continuation else secrets.token_hex(16)
+    if not session_id:
+        session_id = secrets.token_hex(16)
+    if history.get("session_id") != session_id:
+        history = {"session_id": session_id, "cycle": 0, "ips": []}
+    excluded = set(history["ips"])
+    prior_path = settings["root"] / "data/handoff/proxybench-attempted.json.gz"
+    if history["cycle"] and prior_path.exists():
+        excluded.update(json.loads(gzip.decompress(prior_path.read_bytes())))
+    # Cloud does not need or receive the local Profile. The local stage normalizes port from the Profile.
+    pool, report = build(settings, 443, excluded, include_fixed=history["cycle"] == 0)
+    report.update(continuation=bool(history["cycle"]), session_id=session_id, cycle=history["cycle"] + 1)
+    incumbents_path = settings["output_dir"] / "nodes.json"
+    incumbents = json.loads(incumbents_path.read_text(encoding="utf-8")) if incumbents_path.exists() else []
+    atomic_write_bytes(destination, gzip.compress(json.dumps({"schema": 2, "pool": pool, "report": report,
+                                                             "incumbents": incumbents}).encode(), mtime=0))
+    history.update(cycle=report["cycle"], ips=sorted(excluded | {item["ip"] for item in pool}))
+    atomic_write_bytes(history_path, gzip.compress(json.dumps(history).encode(), mtime=0))
     atomic_write_json(destination.with_name("proxybench-cloud-health.json"), report)
     return report
 
@@ -44,6 +62,7 @@ class Pipeline:
         self.control = Control(settings["state_dir"], self.update)
         self.status = {}
         self.cloudflare_url = "https://cp.cloudflare.com/"
+        self.incumbents = []
 
     def update(self, **values) -> None:
         self.status.update(values)
@@ -108,13 +127,17 @@ class Pipeline:
             path = self.settings["root"] / "data/handoff/proxybench-pool.json.gz"
             payload = json.loads(gzip.decompress(path.read_bytes()))
             pool, report = payload["pool"], payload["report"]
+            self.incumbents = payload.get("incumbents", [])
             for item in pool:
                 if "authorized_proxy_candidate" not in item["source_types"]:
                     item["port"] = profile.port
             pool = merge(pool)
         else:
+            arguments = {"include_fixed": False} if self.store.state.get("pool") else {}
             pool, report = self.pool_builder(self.settings, profile.port,
-                                            {item["ip"] for item in self.store.state.get("pool", [])})
+                                            {item["ip"] for item in self.store.state.get("pool", [])}, **arguments)
+            path = self.settings["output_dir"] / "nodes.json"
+            self.incumbents = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
         # Proxy names remain unique across replenishment cycles.
         for index, item in enumerate(pool, len(self.store.state.get("pool", [])) + 1):
             item["proxy_name"] = f"PB-{index:06d}"
@@ -125,10 +148,13 @@ class Pipeline:
         with RunLock(self.settings["runtime_dir"]):
             recover(self.settings["output_dir"])
             state = self.store.load() if resume else {}
+            fresh_handoff = False
             if state and handoff:
                 channel = self.settings["root"] / "data/handoff/proxybench-pool.json.gz"
                 handoff_report = json.loads(gzip.decompress(channel.read_bytes()))["report"]
-                if not handoff_report.get("continuation") and handoff_report.get("seed") != state.get("sources", {}).get("seed"):
+                fresh_handoff = handoff_report.get("seed") != state.get("sources", {}).get("seed")
+                if fresh_handoff and (not handoff_report.get("continuation") or
+                                      handoff_report.get("session_id") != state.get("session_id")):
                     state = {}
             if state and state.get("profile_fingerprint") != profile.fingerprint:
                 raise ValueError("Profile 已更改，不能混用旧测量；请开始新一轮")
@@ -137,7 +163,7 @@ class Pipeline:
             try:
                 self.manager.ensure(self.settings["auto_update"])
                 validation_path = self.settings["runtime_dir"] / "validation.json"
-                validation = json.loads(validation_path.read_text()) if validation_path.exists() else {}
+                validation = json.loads(validation_path.read_text(encoding="utf-8")) if validation_path.exists() else {}
                 if validation.get("profile_fingerprint") != profile.fingerprint or not validation.get("batch100_passed"):
                     self.update(status="Validation Required", stage="请先完成 1 → 10 → 100 个真实节点验收")
                     return {"status": "validation_required", "published": False}
@@ -147,15 +173,23 @@ class Pipeline:
                     state = {"run_id": secrets.token_hex(16), "pool": pool, "results": {}, "sources": source_report,
                              "phase": "scan", "cycle": 1, "profile_fingerprint": profile.fingerprint,
                              "mihomo_version": self.manager.version}
+                    state.update(session_id=source_report.get("session_id", state["run_id"]),
+                                 cycle=source_report.get("cycle", 1),
+                                 previous_general=self.incumbent_candidates(profile, "general"),
+                                 previous_jp=self.incumbent_candidates(profile, "jp_append"))
                     self.store.state = state
                     self.store.commit()
-                elif state["phase"] == "completed":
+                elif state["phase"] == "completed" and not fresh_handoff:
                     return json.loads((self.settings["output_dir"] / "health.json").read_text(encoding="utf-8"))
-                elif state["phase"] == "needs_more":
+                elif fresh_handoff or state["phase"] == "needs_more":
                     fresh, source_report = self.new_pool(profile, handoff)
-                    previous = {f"{item['ip']}:{item['port']}" for item in state["pool"]}
-                    state["pool"].extend(item for item in fresh if f"{item['ip']}:{item['port']}" not in previous)
-                    state.update(phase="scan", cycle=state["cycle"] + 1, sources=source_report, general_results={}, jp_results={})
+                    previous = {item["ip"] for item in state["pool"]}
+                    state["pool"].extend(item for item in fresh if item["ip"] not in previous)
+                    state.update(phase="scan", cycle=source_report.get("cycle", state["cycle"] + 1), sources=source_report,
+                                 general_results={}, jp_results={})
+                    if self.incumbents:
+                        state.update(previous_general=self.incumbent_candidates(profile, "general"),
+                                     previous_jp=self.incumbent_candidates(profile, "jp_append"))
                     self.store.commit()
                 while True:
                     profiles = self.profiles(state["pool"], profile)
@@ -166,7 +200,7 @@ class Pipeline:
                         self.store.commit()
                     qualified = sorted((x for x in state["results"].values() if x.get("qualified")), key=ranking_key)
                     if state["phase"] == "general_retest":
-                        general_pool = [self.candidate(x) for x in qualified[:200]]
+                        general_pool = self.competition_candidates(qualified[:200], state.get("previous_general", []))
                         self.scan(general_pool, "general_results", profiles, fixed_rules=state["competition_rules"])
                         state["phase"] = "jp_retest"
                         self.store.commit()
@@ -174,7 +208,8 @@ class Pipeline:
                     generals = self.unique_ips(generals)[:100]
                     general_ips = {item["ip"] for item in generals}
                     if state["phase"] == "jp_retest":
-                        jp_pool = [self.candidate(x) for x in qualified if x.get("jp_qualified") and x["ip"] not in general_ips]
+                        jp_pool = self.competition_candidates([x for x in qualified if x.get("jp_qualified")], state.get("previous_jp", []))
+                        jp_pool = [x for x in jp_pool if x["ip"] not in general_ips]
                         for offset in range(0, len(jp_pool), 20):
                             self.scan(jp_pool[offset:offset + 20], "jp_results", profiles, fixed_rules=state["competition_rules"])
                             jp_passed = [x for x in state.get("jp_results", {}).values() if x.get("qualified") and x.get("jp_qualified")]
@@ -189,10 +224,12 @@ class Pipeline:
                               "candidate_total": len(state["pool"]), "tested_count": len(state["results"]),
                               "qualified_count": len(qualified), "jp_qualified_count": sum(x.get("jp_qualified", False) for x in qualified),
                               "mihomo_version": self.manager.version, "batch_total": math.ceil(len(state["pool"]) / 100),
-                              "batch_completed": math.ceil(len(state["results"]) / 100), "run_id": state["run_id"], "cycle": state["cycle"]}
+                              "batch_completed": math.ceil(len(state["results"]) / 100), "run_id": state["run_id"],
+                              "cycle": state["cycle"], "session_id": state["session_id"],
+                              "previous_general_competitors": len(state.get("previous_general", []))}
                     result = publish(self.settings["output_dir"], final, report)
                     atomic_write_bytes(self.settings["root"] / "data/handoff/proxybench-attempted.json.gz",
-                                       gzip.compress(json.dumps(sorted({x["ip"] for x in state["results"].values()})).encode(), mtime=0))
+                                       gzip.compress(json.dumps(sorted({x["ip"] for x in state["pool"]})).encode(), mtime=0))
                     if result["published"] or state["cycle"] >= self.settings["max_cycles"] or handoff:
                         state["phase"] = "completed" if result["published"] else "needs_more"
                         self.store.commit()
@@ -200,8 +237,8 @@ class Pipeline:
                         return result
                     self.control.checkpoint()
                     fresh, source_report = self.new_pool(profile, False)
-                    previous = {f"{item['ip']}:{item['port']}" for item in state["pool"]}
-                    state["pool"].extend(item for item in fresh if f"{item['ip']}:{item['port']}" not in previous)
+                    previous = {item["ip"] for item in state["pool"]}
+                    state["pool"].extend(item for item in fresh if item["ip"] not in previous)
                     state.update(cycle=state["cycle"] + 1, phase="scan", sources=source_report, general_results={}, jp_results={})
                     self.store.commit()
             except Stopped:
@@ -219,6 +256,23 @@ class Pipeline:
                 self.manager.benchmark_active = False
                 self.manager.stop()
                 self.update(mihomo=self.manager.health())
+
+    @staticmethod
+    def competition_candidates(fresh: list[dict], incumbents: list[dict]) -> list[dict]:
+        # Incumbents are always admitted to the final competition, even outside the fresh top 200.
+        return Pipeline.unique_ips([Pipeline.candidate(x) for x in [*incumbents, *fresh]])
+
+    def incumbent_candidates(self, profile: ProxyProfile, lane: str) -> list[dict]:
+        limit = 100 if lane == "general" else 10
+        candidates = []
+        for index, item in enumerate(self.incumbents):
+            if item.get("lane", "general" if index < 100 else "jp_append") != lane:
+                continue
+            candidates.append({"ip": item["ip"], "port": profile.port, "proxy_name": f"PB-OLD-{index + 1:03d}",
+                               "source_names": item.get("sources", ["last-good"]),
+                               "source_types": ["previous_published_candidate"], "source_priority": 0,
+                               "jp_hint": lane == "jp_append"})
+        return self.unique_ips(candidates)[:limit]
 
     @staticmethod
     def candidate(result: dict) -> dict:

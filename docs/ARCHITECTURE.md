@@ -1,5 +1,7 @@
 # V13 架构：云端发现，本地决定
 
+此文档保留原仓库 V13 历史架构。当前独立 ProxyBench 的规则代理、100+JP10、带宽测量与三轮不重复流程见 [ARCHITECTURE-PROXYBENCH.md](ARCHITECTURE-PROXYBENCH.md)。
+
 ## 为什么改成两段式
 
 GitHub 托管 Runner 通常位于海外数据中心。它测出的 TCP、TLS、TTFB 和下载速度只代表 Runner 到 Cloudflare 的路径，不能代表用户家中宽带到同一 Anycast 地址的路径。V13 只让云端做大规模、低成本的候选压缩，最终质量门槛全部由 Windows 自托管 Runner 在本机直连网络上执行。

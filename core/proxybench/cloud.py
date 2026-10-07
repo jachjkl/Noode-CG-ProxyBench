@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import shutil
 import socket
 import subprocess
@@ -15,7 +16,7 @@ from pathlib import Path
 from core.io_utils import atomic_write_json
 
 from .profile import ProxyProfile, discover_profiles, import_discovered, safe_error
-from .state import Control, Stopped
+from .state import Control, Stopped, Store
 
 REPOSITORY = "jachjkl/Noode-CG-ProxyBench"
 
@@ -111,7 +112,38 @@ class CloudController:
             time.sleep(0.5)
         raise ValueError("独立 Runner 未能连接 GitHub")
 
-    def run(self) -> dict:
+    def dispatch(self, session_id: str, reuse: bool) -> None:
+        before = datetime.now(UTC).isoformat()[:19]
+        self.run_id = None
+        self.command(["workflow", "run", "proxybench.yml", "--repo", REPOSITORY, "--ref", "main", "-f",
+                      f"session_id={session_id}", "-f", f"reuse_handoff={str(reuse).lower()}"])
+        for _ in range(30):
+            self.control.checkpoint()
+            runs = self.command(["run", "list", "--repo", REPOSITORY, "--workflow", "proxybench.yml", "--limit", "20",
+                                 "--json", "databaseId,createdAt,event,status,displayTitle"], as_json=True)
+            fresh = [x for x in runs if x["createdAt"] >= before and x.get("event") == "workflow_dispatch"
+                     and session_id in x.get("displayTitle", "")]
+            if fresh:
+                self.run_id = fresh[0]["databaseId"]
+                return
+            time.sleep(1)
+        raise CloudError("未找到新云端任务")
+
+    def watch(self) -> dict:
+        while True:
+            self.control.checkpoint()
+            run = self.command(["run", "view", str(self.run_id), "--repo", REPOSITORY,
+                                "--json", "status,conclusion,url,jobs"], as_json=True)
+            current = next((job for job in run.get("jobs", []) if job.get("status") == "in_progress"), {})
+            self.update(stage=current.get("name") or run["status"], status=run["status"], run_id=self.run_id, run_url=run["url"],
+                        jobs=[{"name": job["name"], "status": job["status"], "conclusion": job.get("conclusion")} for job in run.get("jobs", [])])
+            if run["status"] == "completed":
+                return run
+            for _ in range(25):
+                self.control.checkpoint()
+                time.sleep(0.2)
+
+    def run(self, mode: str = "auto") -> dict:
         self.control.path.unlink(missing_ok=True)
         try:
             if not self.settings["profile"].exists():
@@ -121,38 +153,36 @@ class CloudController:
                 import_discovered(references[0], self.settings["profile"])
             ProxyProfile.load(self.settings["profile"])
             self.prepare_runner()
-            before = datetime.now(UTC).isoformat()
-            self.update(stage="请求云端获取全量 IP", status="Dispatching")
-            # Reopening the application resumes an unfinished cycle instead of clearing its completed batches.
-            pointer = self.settings["state_dir"] / "batch-state.json"
-            continuation = pointer.exists() or (self.root / "runtime/pending-publish/manifest.json").exists()
-            self.command(["workflow", "run", "proxybench.yml", "--repo", REPOSITORY, "--ref", "main", "-f",
-                          f"continuation={str(continuation).lower()}"])
-            for _ in range(30):
-                self.control.checkpoint()
-                runs = self.command(["run", "list", "--repo", REPOSITORY, "--workflow", "proxybench.yml", "--limit", "10",
-                                     "--json", "databaseId,createdAt,event,status"], as_json=True)
-                fresh = [x for x in runs if x["createdAt"] >= before[:19] and x.get("event") == "workflow_dispatch"]
-                if fresh:
-                    self.run_id = fresh[0]["databaseId"]
-                    break
-                time.sleep(1)
-            if not self.run_id:
-                raise ValueError("未找到新云端任务")
-            while True:
-                self.control.checkpoint()
-                run = self.command(["run", "view", str(self.run_id), "--repo", REPOSITORY,
-                                    "--json", "status,conclusion,url,jobs"], as_json=True)
-                current = next((job for job in run.get("jobs", []) if job.get("status") == "in_progress"), {})
-                self.update(stage=current.get("name") or run["status"], status=run["status"], run_id=self.run_id, run_url=run["url"],
-                            jobs=[{"name": job["name"], "status": job["status"], "conclusion": job.get("conclusion")} for job in run.get("jobs", [])])
-                if run["status"] == "completed":
-                    if run.get("conclusion") != "success":
-                        self.update(stage="云端或本地步骤失败，已保留 Last Good 和状态", status="Failed", run_url=run["url"])
+            state = Store(self.settings["state_dir"]).load()
+            session_path = self.settings["state_dir"] / "session.json"
+            session = json.loads(session_path.read_text(encoding="utf-8")) if session_path.exists() else {"session_id": secrets.token_hex(16)}
+            unfinished = state.get("phase") in {"scan", "general_retest", "jp_retest", "publish"}
+            pending = (self.root / "runtime/pending-publish/manifest.json").exists()
+            reuse = (unfinished or pending) and mode != "continue"
+            if reuse or mode in {"continue", "resume"}:
+                session["session_id"] = state.get("session_id", session["session_id"])
+            atomic_write_json(session_path, session)
+            budget = self.settings["max_cycles"]
+            if reuse:
+                budget = max(1, budget - int(state.get("cycle", 1)) + 1)
+            for attempt in range(budget):
+                self.update(stage="恢复云端交接与已完成批次" if reuse else f"请求云端获取不同 IP（本次 {attempt + 1}/{budget}）", status="Dispatching")
+                self.dispatch(session["session_id"], reuse)
+                run = self.watch()
+                if run.get("conclusion") != "success":
+                    self.update(stage="云端或本地步骤失败，已保留 Last Good 和状态", status="Failed", run_url=run["url"])
                     return {"status": run.get("conclusion"), "run_url": run["url"]}
-                for _ in range(25):
-                    self.control.checkpoint()
-                    time.sleep(0.2)
+                health_path = self.settings["output_dir"] / "health.json"
+                health = json.loads(health_path.read_text(encoding="utf-8")) if health_path.exists() else {}
+                if health.get("published"):
+                    self.update(stage="100 + JP10 已测量并发布", status="Completed", run_url=run["url"])
+                    return {"status": "success", "published": True, "run_url": run["url"]}
+                if not health.get("needs_more"):
+                    return {"status": "success", "published": False, "run_url": run["url"]}
+                # Keep this application's Runner alive for all automatic replenishment cycles.
+                reuse = False
+            self.update(stage="三轮补测结束，合格数不足；可点击继续获取 IP", status="Needs More", run_url=run["url"])
+            return {"status": "needs_more", "published": False, "run_url": run["url"]}
         except Stopped:
             if self.run_id:
                 self.command(["run", "cancel", str(self.run_id), "--repo", REPOSITORY])

@@ -12,11 +12,12 @@
 
 **Ubuntu 获取候选 → 多镜像下载与 SHA-256 → Windows 真实代理优选 → Ubuntu 校验发布 → 本地确认 pending。**
 
-首次运行下载独立 Runner。GitHub 使用本机 jachjkl 登录授权；运行包不携带 GitHub Token 或代理秘密。没有可用配置时窗口显示“缺少可用代理协议配置”，可导入已有节点链接。不修改系统代理，不关闭已有 Clash/Mihomo。
+首次运行下载独立 Runner。GitHub 使用本机 jachjkl 登录授权。公开运行包不携带代理秘密；给所有者的本机专用包按其要求内置真实 Profile，保存在本机，不上传 Release。没有可用配置时可自动读取或导入已有节点链接。不修改系统代理，不关闭已有 Clash/Mihomo。
 
 ## 默认测试规则
 
-- 两个固定链接每个新周期全量读取，官方 IPv4 范围额外取 10,000 个唯一候选，JP Supplemental 另计并验证官方范围。
+- 两个固定链接每次打开的会话只全量读取一次，官方 IPv4 范围每轮额外取 10,000 个唯一候选，JP Supplemental 另计并验证官方范围。
+- 最多三轮自动补测；云端会话历史排除所有已交接 IP，包括尚未实测的候选。断点继续复用同一交接包；继续获取 IP 请求新批次，并与旧普通 TOP100 重新实测竞争，JP10 单独追加。
 - 每 Batch 默认 100 个 IP；一个独立 Mihomo Core 一次加载最多 100 个独立 Proxy。
 - Google、Cloudflare、GitHub 三站连续三轮，共九次实际 Proxy Site Probe。
 - 默认平均延迟 <=200ms、请求丢失 0%、三次 2MiB 完整代理下载平均 >=16Mbps（2MB/s）。下载单并发防止带宽竞争和 selector 竞态。
@@ -29,7 +30,7 @@
 
 ## 结果与秘密
 
-输出 nodes.txt、nodes.json、nodes.csv、api.json、ip.zip、health.json。真实 Profile、授权代理本机配置、runtime、Controller secret 不上传 GitHub，不进入分发 ZIP。Rule Mode、TUN 关闭、随机 loopback 端口。下载和 Geo 必须有正确 Candidate 的连接链证据，DIRECT 或错误节点结果无效。
+输出 nodes.txt、nodes.json、nodes.csv、api.json、ip.zip、health.json。真实 Profile、授权代理本机配置、runtime、Controller secret 不上传 GitHub，不进入公开分发 ZIP。专用 ZIP 仅按所有者要求在本机加入 Profile。Rule Mode、TUN 关闭、随机 loopback 端口。下载和 Geo 必须有正确 Candidate 的连接链证据，DIRECT 或错误节点结果无效。
 
 仓库公开仅提供源码和公开 IP 数据。代码写入账户仅 jachjkl；GitHub Actions 由所有者授权发布。
 

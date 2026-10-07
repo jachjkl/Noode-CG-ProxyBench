@@ -1,9 +1,18 @@
 name: ProxyBench real proxy TOP100 + JP10
+run-name: ProxyBench ${{ inputs.session_id || github.run_id }}
 on:
   workflow_dispatch:
     inputs:
       continuation:
         description: Continue an unfinished ProxyBench cycle
+        type: boolean
+        default: false
+      session_id:
+        description: Application session identity (fixed sources only once)
+        type: string
+        default: ''
+      reuse_handoff:
+        description: Resume saved batches without fetching another candidate pool
         type: boolean
         default: false
 permissions: {}
@@ -28,6 +37,8 @@ jobs:
       payload_5: ${{ steps.encode.outputs.payload_5 }}
     env:
       NOODE_CONTINUATION: ${{ inputs.continuation || 'false' }}
+      NOODE_SESSION_ID: ${{ inputs.session_id }}
+      NOODE_REUSE_HANDOFF: ${{ inputs.reuse_handoff || 'false' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
@@ -42,7 +53,7 @@ jobs:
           test "$GITHUB_REPOSITORY" = "jachjkl/Noode-CG-ProxyBench"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- data/handoff/proxybench-pool.json.gz data/handoff/proxybench-cloud-health.json
+          git add -- data/handoff/proxybench-pool.json.gz data/handoff/proxybench-cloud-health.json data/handoff/proxybench-session-history.json.gz
           if ! git diff --cached --quiet; then
             git commit -m "chore(data): fresh full proxy candidate handoff [skip ci]"
             git push origin "HEAD:$GITHUB_REF_NAME"
@@ -155,14 +166,3 @@ jobs:
           Set-Location -LiteralPath $env:NOODE_PROXYBENCH_APP
           & $env:NOODE_PROXYBENCH_PYTHON scripts/proxybench_channel.py confirm --pending runtime/pending-publish --sha256 '${{ needs.local-select.outputs.sha256 }}'
           if ($LASTEXITCODE -ne 0) { throw 'Pending confirmation mismatch' }
-  replenish:
-    needs: [local-select, local-confirm]
-    if: needs.local-select.outputs.needs_more == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: read
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - run: gh workflow run proxybench.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" -f continuation=true

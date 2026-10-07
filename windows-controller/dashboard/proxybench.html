@@ -6,14 +6,14 @@
 <div class="nav-footer">真实代理 · 三站三轮<small>General TOP100 + JP10</small></div></aside>
 <div class="shell"><header class="topbar"><div class="brand-copy"><p class="eyebrow">REAL PROXY BENCHMARK</p>
 <h1>Noode-CG <span>真实代理优选</span></h1><p class="subtitle">100-IP Batch · 三网站 × 三轮 · 实际代理下载 · 出口地区验证</p></div>
-<div class="header-actions"><button class="button primary" data-action="start">开始优选</button><button class="button secondary" data-action="resume">断点继续</button>
+<div class="header-actions"><button class="button primary" data-action="start">开始优选</button><button class="button secondary" data-action="continue-fetch">继续获取 IP</button><button class="button secondary" data-action="resume">断点继续</button>
 <button class="button secondary" data-action="pause">暂停</button><button class="button secondary" data-action="resume-paused">恢复</button><button class="button danger" data-action="stop">停止并保存</button></div></header>
 <main id="overview"><p id="feedback" role="status" aria-live="polite">正在读取本机状态…</p>
 <section class="summary-grid"><article class="metric-card"><span class="metric-label">当前阶段</span><strong id="stage" class="metric-value text">等待开始</strong><span id="status" class="metric-foot">尚未运行</span></article>
 <article class="metric-card"><span class="metric-label">候选 / 已测试</span><strong id="counts" class="metric-value">0 / 0</strong><span id="batch" class="metric-foot">Batch 0 / 0</span></article>
 <article class="metric-card"><span class="metric-label">合格 / 拒绝</span><strong id="qualified" class="metric-value">0 / 0</strong><span class="metric-foot">三站 + 延迟 + 丢失 + 下载</span></article>
 <article class="metric-card"><span class="metric-label">Mihomo Core</span><strong id="core" class="metric-value text">未启动</strong><span id="coreDetail" class="metric-foot">隔离 Rule Mode · 仅本机监听</span></article></section>
-<section class="panel"><div class="panel-heading"><div><h2>候选来源</h2><p>固定源每个新周期全量刷新；JP 标记用于提示，合格后验证真实出口。</p></div></div><div id="sources" class="source-line">尚未获取本轮候选</div></section>
+<section class="panel"><div class="panel-heading"><div><h2>候选来源</h2><p>两个固定来源每次打开只全量获取一次；最多三轮自动补测，各轮 IP 不重复。JP 标记用于提示，合格后验证真实出口。</p></div></div><div id="sources" class="source-line">尚未获取本轮候选</div></section>
 <section id="profile" class="panel"><div class="panel-heading"><div><h2>真实代理配置</h2><p id="profileState">正在检查配置…</p></div></div>
 <div class="header-actions"><button class="button primary" id="autoImport">自动读取本机 Worker 配置</button><button class="button secondary" data-action="validate">完成 1 → 10 → 100 路径验收</button></div>
 <details><summary>从现有节点链接或 YAML 导入</summary><p>VLESS / Trojan / VMess 链接或单个 Mihomo 节点。参数仅保存在本机。</p>

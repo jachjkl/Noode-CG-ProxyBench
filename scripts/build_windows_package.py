@@ -1,4 +1,4 @@
-"""Build a credential-free portable Windows webpage application."""
+"""Build public and explicitly requested private Windows webpage packages separately."""
 from __future__ import annotations
 
 import hashlib
@@ -12,7 +12,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def build() -> Path:
+def build(personal: bool = False) -> Path:
+    profile_path = ROOT / "config/proxy-profile.local.yaml"
+    if personal:
+        from core.proxybench.profile import ProxyProfile
+        ProxyProfile.load(profile_path)
     distribution = ROOT / "dist/Noode-CG-ProxyBench-Windows"
     app = distribution / "app"
     app.mkdir(parents=True, exist_ok=True)
@@ -72,19 +76,25 @@ shell.Run command, 0, False
     (distribution / "开始自动优选.vbs").write_text(vbs, encoding="utf-16")
     (distribution / "Start-ProxyBench.vbs").write_text(vbs, encoding="utf-16")
     (distribution / "开始自动优选.cmd").write_text('@echo off\r\nstart "" wscript.exe "%~dp0Start-ProxyBench.vbs"\r\n', encoding="ascii")
-    (distribution / "运行说明.txt").write_text("解压到任意本地目录，双击【开始自动优选.vbs】。\n程序自动匹配本机 Worker 配置，启动独立 Runner，云端获取 IP，本地代理测试，交回云端发布。\n首次运行会下载独立 Runner。GitHub 使用你本机 jachjkl 的登录授权，鉴权信息不在此运行包中。\n没有可用节点配置时，窗口会提示导入。暂停和停止均保存状态；未通过 110 条门槛不会覆盖成功结果。\n", encoding="utf-8")
-    archive_path = ROOT / "dist/Noode-CG-ProxyBench-Windows-1.0.0.zip"
+    instructions = "解压到任意本地目录，双击【开始自动优选.vbs】。\n已内置 Mihomo、Python、GitHub CLI，无需手工安装内核。\n自动匹配代理、启动独立 Runner，GitHub 云端获取 IP，本地三网站三轮与实际 Mbps 测试，最终交回云端发布。\n两个固定来源每次打开只全量获取一次；自动最多三轮，整次会话候选不重复。点击【继续获取 IP】将新候选与旧普通 TOP100 重新实测竞争，JP10 最后追加。\n首次运行下载独立 Runner。GitHub 使用本机 jachjkl 的登录授权。暂停和停止均保存状态；不足 100+JP10 不覆盖成功结果。\n"
+    instructions += "此专用包已内置本机真实代理配置；请仅在自己的电脑使用和保存。\n" if personal else "此公开包不含个人代理配置；可自动读取本机配置。\n"
+    (distribution / "运行说明.txt").write_text(instructions, encoding="utf-8")
+    archive_path = ROOT / ("dist/Noode-CG-ProxyBench-专用版-1.0.0.zip" if personal else "dist/Noode-CG-ProxyBench-Windows-1.0.0.zip")
     with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         for path in distribution.rglob("*"):
             if not path.is_file():
                 continue
             relative = path.relative_to(distribution).as_posix()
             # Rebuilding after a local test must never ship imported credentials or Runner registration files.
-            if ".local." in relative or "/runner/" in relative or relative.startswith("app/data/") or "session-" in relative or relative.endswith(".log"):
+            if ".local." in relative or "/runner/" in relative or relative.startswith(("app/data/", "app/output/")) or "session-" in relative or relative.endswith(".log"):
                 continue
             archive.write(path, "Noode-CG-ProxyBench-Windows/" + relative)
+        if personal:
+            archive.writestr("Noode-CG-ProxyBench-Windows/app/config/proxy-profile.local.yaml", profile_path.read_bytes())
     return archive_path
 
 
 if __name__ == "__main__":
-    print(build())
+    import sys
+    sys.path.insert(0, str(ROOT))
+    print(build(personal="--personal" in sys.argv))
