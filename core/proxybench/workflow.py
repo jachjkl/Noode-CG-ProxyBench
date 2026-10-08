@@ -83,5 +83,7 @@ def progress(live: dict, cloud: dict, health: dict) -> list[dict]:
         elif state == "Paused":
             mark(active, "paused", "已暂停，可继续")
         elif state == "Stopped" or cloud.get("status") == "Stopped":
-            mark(active, "paused", "已停止并保存")
+            mark(active, "paused", cloud.get("stage") if cloud.get("interrupted") else "已停止并保存")
+        if cloud.get("status") == "Recovering":
+            mark(active, "waiting", cloud.get("stage", "正在恢复云端连接"))
     return rows

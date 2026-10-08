@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
 import socket
@@ -13,6 +14,7 @@ from pathlib import Path
 
 from core.io_utils import atomic_write_json
 
+from .cloud_network import cloud_environment
 from .execution import cli_python
 from .mihomo_manager import owned_core_running
 from .profile import ProxyProfile, discover_profiles, import_discovered, refresh_existing, safe_error
@@ -37,6 +39,7 @@ class CloudController:
         self.log = None
         self.run_id = None
         self.live = {}
+        self.diag_offsets = {}
         self.control = Control(settings["state_dir"])
 
     def update(self, **values) -> None:
@@ -50,6 +53,7 @@ class CloudController:
         if not self.gh:
             raise CloudError("缺少 GitHub CLI；请使用完整 Windows 运行包")
         result = subprocess.run([self.gh, *args], capture_output=True, encoding="utf-8", errors="replace", timeout=timeout,
+                                env=cloud_environment(),
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if result.returncode:
             raise CloudError("GitHub 连接或账户授权失败")
@@ -94,17 +98,18 @@ class CloudController:
             configured = subprocess.run([str(executable), "configure", "--unattended", "--url", f"https://github.com/{REPOSITORY}",
                                          "--token", token, "--name", f"Noode-ProxyBench-{socket.gethostname()}-{suffix}",
                                          "--labels", "noode-cg-proxybench", "--work", "_work"],
-                                        cwd=self.runner_root, capture_output=True, timeout=120,
+                                        cwd=self.runner_root, env=cloud_environment(), capture_output=True, timeout=120,
                                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             token = ""
             if configured.returncode:
                 raise CloudError("独立 Runner 注册失败")
         log_path = self.root / "runtime/runner-console.log"
         self.log = log_path.open("wb")
-        env = {**os.environ, "NOODE_PROXYBENCH_APP": str(self.root), "NOODE_PROXYBENCH_PYTHON": cli_python(),
+        env = {**cloud_environment(), "NOODE_PROXYBENCH_APP": str(self.root), "NOODE_PROXYBENCH_PYTHON": cli_python(),
                "NOODE_LOCAL_ROOT": str(self.root), "PYTHONUTF8": "1"}
         if self.gh:
             env["PATH"] = str(Path(self.gh).parent) + os.pathsep + env.get("PATH", "")
+        self.update(cloud_connection="使用现有代理连接 GitHub" if env.get("https_proxy") else "直接连接 GitHub")
         self.runner = subprocess.Popen([str(executable), "run"], cwd=self.runner_root, env=env, stdout=self.log, stderr=self.log,
                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         for _ in range(360):
@@ -128,7 +133,7 @@ class CloudController:
         token = self.command(["api", "--method", "POST", f"repos/{REPOSITORY}/actions/runners/remove-token"], as_json=True)["token"]
         try:
             removed = subprocess.run([str(self.runner_root / "bin/Runner.Listener.exe"), "remove", "--unattended", "--token", token],
-                                     cwd=self.runner_root, capture_output=True, timeout=60,
+                                     cwd=self.runner_root, env=cloud_environment(), capture_output=True, timeout=60,
                                      creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             if removed.returncode:
                 raise CloudError("独立 Runner 注册清理失败，下次启动将自动恢复连接")
@@ -136,6 +141,7 @@ class CloudController:
             token = ""
 
     def dispatch(self, session_id: str, reuse: bool) -> None:
+        self.diag_offsets = {path: path.stat().st_size for path in (self.runner_root / "_diag").glob("Runner_*.log")}
         request_id = secrets.token_hex(16)
         self.run_id = None
         live_path = self.settings["state_dir"] / "live.json"
@@ -154,6 +160,48 @@ class CloudController:
                 return
             time.sleep(1)
         raise CloudError("未找到新云端任务")
+
+    def wait_local_exit(self) -> None:
+        """Never dispatch over a cancelling Worker or the owned candidate core."""
+        import psutil
+        for _ in range(180):
+            self.control.checkpoint()
+            workers = False
+            if self.runner and isinstance(self.runner.pid, int):
+                try:
+                    workers = any(child.name().lower() == "runner.worker.exe"
+                                  for child in psutil.Process(self.runner.pid).children(recursive=True))
+                except psutil.Error:
+                    pass
+            if not workers and not owned_core_running(self.settings["runtime_dir"]):
+                return
+            time.sleep(1)
+        raise CloudError("上次测速任务尚未退出，已保留断点；退出后可继续测试")
+
+    def runner_lost_connection(self) -> bool:
+        # Only this dispatch's new diagnostic bytes can prove an infrastructure cancellation.
+        # Do not report raw Runner logs: they may contain signed URLs and credential material.
+        for path in sorted((self.runner_root / "_diag").glob("Runner_*.log"), reverse=True):
+            try:
+                with path.open("rb") as handle:
+                    handle.seek(max(self.diag_offsets.get(path, 0), path.stat().st_size - 256_000))
+                    content = handle.read().decode("utf-8", errors="replace")
+            except OSError:
+                continue
+            lost = re.findall(r"Catch exception during renew runner job ([a-f0-9-]{36})\.", content)
+            if any(f"finish job request for job {job} with result: Abandoned" in content for job in lost):
+                return True
+        return False
+
+    def interrupted(self, message: str) -> None:
+        path = self.settings["state_dir"] / "live.json"
+        live = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        # Preserve every measurement and the current phase, but stop presenting stale in-flight work.
+        live.update(status="Stopped", stage=message, speed_active=[])
+        core = live.setdefault("mihomo", {})
+        core.update(status="Stopped", loaded_proxies=0, controller_healthy=False)
+        atomic_write_json(path, live)
+        self.update(status="Stopped", stage=message, interrupted=True)
 
     def watch(self) -> dict:
         while True:
@@ -216,12 +264,28 @@ class CloudController:
             if reuse and budget:
                 budget = max(1, budget - int(state.get("cycle", 1)) + 1)
             attempt = 0
+            recoveries = 0
             while not budget or attempt < budget:
                 attempt += 1
                 self.update(stage="恢复云端交接与已完成批次" if reuse else f"请求云端获取不同 IP（本次第 {attempt} 轮）", status="Dispatching")
                 self.dispatch(session["session_id"], reuse)
                 run = self.watch()
                 if run.get("conclusion") != "success":
+                    if run.get("conclusion") == "cancelled":
+                        self.wait_local_exit()
+                        lost = self.runner_lost_connection()
+                        message = "执行器与 GitHub 连接中断，已保存测速断点" if lost else "GitHub 任务已取消，已保存测速断点"
+                        self.interrupted(message)
+                        if lost and recoveries < 3:
+                            recoveries += 1
+                            self.update(status="Recovering", stage=f"云端连接中断，正在从已保存批次恢复（第 {recoveries} 次）", recovery_attempt=recoveries)
+                            for _ in range(25):
+                                self.control.checkpoint()
+                                time.sleep(0.2)
+                            reuse = True
+                            attempt -= 1  # A network retry is the same candidate round, not replenishment.
+                            continue
+                        return {"status": "stopped", "reason": "runner_connection_lost" if lost else "cancelled", "run_url": run["url"]}
                     message = "云端或本地步骤失败，已保留 Last Good 和状态"
                     validation_path = self.settings["runtime_dir"] / "validation.json"
                     if any(job.get("name") in {"local-select", "本地真实代理测速"} and job.get("conclusion") == "failure" for job in run.get("jobs", [])) and validation_path.exists():

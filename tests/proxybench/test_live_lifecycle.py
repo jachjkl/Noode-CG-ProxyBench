@@ -116,6 +116,17 @@ class LiveLifecycleTests(unittest.TestCase):
                 self.assertFalse(controller.finish_close(normal=normal))
                 self.assertTrue(saved.exists())
 
+    def test_closing_after_runner_interruption_preserves_checkpoint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            controller = self.dashboard(root)
+            saved = root / "data/proxy-bench/batch-state.json"
+            self.write(saved, {"saved": True})
+            self.write(root / "data/proxy-bench/cloud-live.json", {"status": "Stopped", "interrupted": True})
+            controller.request_close()
+            self.assertFalse(controller.finish_close(normal=True))
+            self.assertTrue(saved.exists())
+
     def test_auto_profile_refresh_syncs_changed_authentication_without_reporting_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

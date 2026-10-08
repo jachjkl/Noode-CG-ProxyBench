@@ -224,7 +224,7 @@ class BenchDashboard:
     def request_close(self) -> None:
         live = self.read_cached(self.settings["state_dir"] / "live.json", default={})
         cloud = self.read_cached(self.settings["state_dir"] / "cloud-live.json", default={})
-        self.preserve_on_close |= live.get("status") == "Failed" or cloud.get("status") == "Failed"
+        self.preserve_on_close |= live.get("status") == "Failed" or cloud.get("status") == "Failed" or cloud.get("interrupted", False)
         self.closing = True
         self.action("stop", {})
 
@@ -235,7 +235,7 @@ class BenchDashboard:
         """Delete only known transient files after the owned task releases its locks."""
         live = self.read_cached(self.settings["state_dir"] / "live.json", default={})
         cloud = self.read_cached(self.settings["state_dir"] / "cloud-live.json", default={})
-        self.preserve_on_close |= live.get("status") == "Failed" or cloud.get("status") == "Failed"
+        self.preserve_on_close |= live.get("status") == "Failed" or cloud.get("status") == "Failed" or cloud.get("interrupted", False)
         if not normal or self.preserve_on_close or not self.ready_to_close():
             return False
         app = self.app.resolve()
