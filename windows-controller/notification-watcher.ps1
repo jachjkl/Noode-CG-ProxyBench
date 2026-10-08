@@ -1,5 +1,5 @@
 ﻿param(
-    [string]$LocalRoot = "D:\桌面\软件\Noode-CG-ProxyBench-Local"
+    [string]$LocalRoot = $PSScriptRoot
 )
 
 $ErrorActionPreference = "Stop"

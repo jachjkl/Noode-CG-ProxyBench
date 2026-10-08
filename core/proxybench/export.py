@@ -14,7 +14,7 @@ from pathlib import Path
 from core.io_utils import atomic_write_bytes, atomic_write_json, atomic_write_text
 
 PUBLIC_FIELDS = {"ip", "port", "rank", "lane", "jp_hint", "geo_country", "geo_verified", "geo_conflict",
-                 "entry_latency_ms", "entry_connected", "entry_method", "proxy_probe_count",
+                 "entry_latency_ms", "entry_connected", "entry_preferred", "entry_method", "proxy_probe_count",
                  "google_rounds_ms", "google_average_ms", "cloudflare_rounds_ms", "cloudflare_average_ms",
                  "github_rounds_ms", "github_average_ms", "round_averages_ms", "proxy_average_latency_ms",
                  "proxy_loss_percent", "download_rounds_mbps", "proxy_download_average_mbps",

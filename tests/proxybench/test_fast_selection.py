@@ -61,6 +61,7 @@ class FastSelectionTests(unittest.TestCase):
         self.assertEqual(len({listener["port"] for listener in config["listeners"]}), 101)
         self.assertTrue(all(listener["listen"] == "127.0.0.1" for listener in config["listeners"]))
         self.assertIn("IN-NAME,proxybench-node-99,PB-000100", config["rules"])
+        self.assertTrue(config["unified-delay"])
 
     def test_screen_rejects_bad_entries_and_preserves_partial_proxy_results_on_resume(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -69,17 +70,21 @@ class FastSelectionTests(unittest.TestCase):
             manager.health = lambda: {"status": "Stopped"}
             settings = {"state_dir": root, "rules_path": root / "rules.json", "rules": RULES, "fast_entry_screen": True}
             pipeline = Pipeline(settings, manager=manager)
-            pipeline.store.state = {"run_id": "resume", "phase": "scan", "pool": pool(3), "results": {}}
+            pipeline.store.state = {"run_id": "resume", "phase": "scan", "pool": pool(4), "results": {}}
             completed = {**pool(1)[0], "key": "104.16.0.1:443", "qualified": True}
             pipeline.store.partial[completed["key"]] = completed
             def screen(row, timeout):
+                if row["ip"] == "104.16.0.4":
+                    return {"entry_connected": False, "entry_latency_ms": None}
                 latency = {"104.16.0.1": 30, "104.16.0.2": 250, "104.16.0.3": 50}[row["ip"]]
                 return {"entry_connected": True, "entry_latency_ms": latency}
             with patch("core.proxybench.pipeline.entry_probe", side_effect=screen):
                 survivors = pipeline.screen_candidates(pipeline.store.state["pool"])
-            self.assertEqual(len(survivors), 2)
+            self.assertEqual([row["ip"] for row in survivors], ["104.16.0.1", "104.16.0.3", "104.16.0.2"])
+            self.assertFalse(survivors[-1]["entry_preferred"])
+            self.assertNotIn("104.16.0.2:443", pipeline.store.state["results"])
             self.assertEqual(pipeline.store.state["results"][completed["key"]], completed)
-            self.assertEqual(pipeline.store.state["results"]["104.16.0.2:443"]["status"], "Rejected Entry")
+            self.assertEqual(pipeline.store.state["results"]["104.16.0.4:443"]["status"], "Rejected Entry")
 
     def test_control_does_not_flush_large_dashboard_snapshot_for_every_checkpoint(self):
         with tempfile.TemporaryDirectory() as directory:

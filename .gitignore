@@ -7,6 +7,7 @@ runtime/
 data/proxy-bench/
 data/proxybench-rules.json
 dist/
+dashboard-cache/
 *.log
 *.py[cod]
 .pytest_cache/

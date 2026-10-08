@@ -36,11 +36,15 @@ class CloudController:
         self.runner = None
         self.log = None
         self.run_id = None
+        self.live = {}
         self.control = Control(settings["state_dir"])
 
     def update(self, **values) -> None:
         path = self.settings["state_dir"] / "cloud-live.json"
-        atomic_write_json(path, {"repository": REPOSITORY, **values})
+        if values.get("status") == "Dispatching":
+            self.live = {}
+        self.live.update(repository=REPOSITORY, **values)
+        atomic_write_json(path, self.live)
 
     def command(self, args: list[str], *, timeout: float = 30, as_json: bool = False):
         if not self.gh:
@@ -155,7 +159,9 @@ class CloudController:
                                 "--json", "status,conclusion,url,jobs"], as_json=True)
             current = next((job for job in run.get("jobs", []) if job.get("status") == "in_progress"), {})
             self.update(stage=current.get("name") or run["status"], status=run["status"], run_id=self.run_id, run_url=run["url"],
-                        jobs=[{"name": job["name"], "status": job["status"], "conclusion": job.get("conclusion")} for job in run.get("jobs", [])])
+                        jobs=[{"name": job["name"], "status": job["status"], "conclusion": job.get("conclusion"),
+                               "steps": [{"name": step["name"], "status": step["status"], "conclusion": step.get("conclusion")}
+                                         for step in job.get("steps", [])]} for job in run.get("jobs", [])])
             if run["status"] == "completed":
                 return run
             for _ in range(25):

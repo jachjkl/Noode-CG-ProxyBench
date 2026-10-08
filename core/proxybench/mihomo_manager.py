@@ -180,7 +180,7 @@ class MihomoManager:
                      for index, name in enumerate(names)]
         return {"mixed-port": 0, "bind-address": "127.0.0.1", "allow-lan": False,
                 "listeners": [{"name": "proxybench-mixed", "type": "mixed", "listen": "127.0.0.1", "port": self.controller.mixed_port}, *dedicated],
-                "mode": "rule", "log-level": "silent", "external-controller": self.controller.url[7:],
+                "mode": "rule", "unified-delay": True, "log-level": "silent", "external-controller": self.controller.url[7:],
                 "secret": self.controller._secret, "tun": {"enable": False}, "ipv6": False,
                 "profile": {"store-selected": False}, "dns": {"enable": False},
                 "proxies": [(profile[item.get("profile_file", "default")] if isinstance(profile, dict) else profile)

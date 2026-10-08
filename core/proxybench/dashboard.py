@@ -11,6 +11,7 @@ from core.io_utils import atomic_write_json
 from .execution import cli_python
 from .profile import ProxyProfile, discover_profiles, import_discovered, save_import
 from .settings import current_rules, load_settings, validate_rules
+from .workflow import progress
 
 
 class BenchDashboard:
@@ -112,7 +113,7 @@ class BenchDashboard:
         return {"live": live, "profile": profile, "rules": current_rules(settings), "published": health,
                 "running": running,
                 "actions_url": f"https://github.com/{self.legacy.repository}/actions",
-                "cloud": cloud,
+                "cloud": cloud, "workflow": progress(live, cloud, health),
                 "can_resume": (settings["state_dir"] / "batch-state.json").exists()}
 
     def action(self, action: str, payload: dict) -> dict:
@@ -163,6 +164,7 @@ class BenchDashboard:
                 command = "validate-runtime" if action == "validate" else "auto-cloud"
                 arguments = ["--mode", "continue" if action == "continue-fetch" else "resume"] if action in {"resume", "continue-fetch"} else []
                 atomic_write_json(settings["state_dir"] / "cloud-live.json", {"repository": self.legacy.repository,
+                                  "mode": action,
                                   "status": "Preparing", "stage": "检查规则代理内核" if action == "validate" else "正在准备云端任务和规则代理"})
                 log_path = self.root / "logs/proxybench.log"
                 log_path.parent.mkdir(parents=True, exist_ok=True)

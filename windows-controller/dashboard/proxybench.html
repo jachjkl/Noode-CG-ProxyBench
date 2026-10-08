@@ -9,7 +9,13 @@
 <div class="header-actions"><button class="button primary" data-action="start">开始优选</button><button class="button secondary" data-action="continue-fetch">继续获取 IP</button>
 <button class="button secondary" data-action="pause">暂停</button><button class="button secondary" data-action="resume-testing">继续测试</button><button class="button danger" data-action="stop">停止并保存</button></div></header>
 <main id="overview"><p id="feedback" role="status" aria-live="polite">正在读取本机状态…</p>
-<section class="flow-strip" aria-label="自动优选流程"><span>① 云端获取 IP</span><span>② 本地代理测速</span><span>③ 新旧 IP 复测竞争</span><span>④ 发布最优 100＋日本 10</span></section>
+<section class="panel workflow-panel" aria-label="自动优选流程"><div class="flow-heading"><h2>运行流程</h2><p id="flowStatus" role="status" aria-live="polite" aria-atomic="true">等待开始 · 已完成 0 / 5 步</p></div>
+<ol id="workflowSteps" class="flow-steps"><li class="flow-step pending" data-step="cloud"><span class="flow-number">流程一</span><strong>云端获取 IP</strong><span class="flow-state">等待开始</span><small>两个完整来源＋边缘候选</small></li>
+<li class="flow-step pending" data-step="download"><span class="flow-number">流程二</span><strong>下载候选 IP</strong><span class="flow-state">等待前一步</span><small>镜像下载并校验</small></li>
+<li class="flow-step pending" data-step="selection"><span class="flow-number">流程三</span><strong>本地代理优选</strong><span class="flow-state">等待前一步</span><small>快速初筛与三网站测试</small></li>
+<li class="flow-step pending" data-step="retest"><span class="flow-number">流程四</span><strong>发布前复测</strong><span class="flow-state">等待前一步</span><small>新旧 IP 竞争与排序</small></li>
+<li class="flow-step pending" data-step="publish"><span class="flow-number">流程五</span><strong>推送 GitHub</strong><span class="flow-state">等待前一步</span><small>最优 100＋日本 10</small></li></ol>
+<progress id="flowProgress" value="0" max="5" aria-label="已完成的运行步骤">0 / 5</progress></section>
 <section class="summary-grid"><article class="metric-card"><span class="metric-label">当前阶段</span><strong id="stage" class="metric-value text">等待开始</strong><span id="status" class="metric-foot">准备就绪</span></article>
 <article class="metric-card"><span class="metric-label">候选 / 已处理</span><strong id="counts" class="metric-value">0 / 0</strong><span id="batch" class="metric-foot">每批最多 100 个 IP</span></article>
 <article class="metric-card"><span class="metric-label">通过 / 未通过</span><strong id="qualified" class="metric-value">0 / 0</strong><span class="metric-foot">网速、响应时间、成功率</span></article>
@@ -17,11 +23,11 @@
 <section class="panel source-panel"><h2>本次候选来源</h2><p>首次获取两个链接的全量 IP 和 10,000 个边缘 IP；后续只补不同的 10,000 个边缘 IP。</p><div id="sources" class="source-line">点击开始优选后自动获取</div></section>
 <section id="tests" class="panel"><div class="panel-heading"><div><h2>IP 列表</h2><p>每页 300 个 IP；点击“详细数据”查看三网站三轮、网速和出口验证。</p></div></div>
 <div class="list-toolbar"><div class="header-actions" role="group" aria-label="列表类型"><button class="button primary" data-list="candidates">全部候选</button><button class="button secondary" data-list="results">测试结果</button><button class="button secondary" data-list="published-results">已发布结果</button></div><span id="listTotal" role="status">共 0 个 IP</span></div>
-<div class="table-scroll" tabindex="0" role="region" aria-label="分页 IP 列表"><table><thead><tr><th scope="col">IP 地址</th><th scope="col">来源</th><th scope="col">入口 / 代理响应（毫秒）</th><th scope="col">请求成功率</th><th scope="col">平均网速（Mbps）</th><th scope="col">出口地区</th><th scope="col">测试状态</th><th scope="col">操作</th></tr></thead><tbody id="tbody"></tbody></table></div>
+<div class="table-scroll" tabindex="0" role="region" aria-label="分页 IP 列表"><table><thead><tr><th scope="col">IP 地址</th><th scope="col">来源</th><th scope="col">入口 / 三站响应（毫秒）</th><th scope="col">请求成功率</th><th scope="col">平均网速（Mbps）</th><th scope="col">出口地区</th><th scope="col">测试状态</th><th scope="col">操作</th></tr></thead><tbody id="tbody"></tbody></table></div>
 <div class="pagination" aria-label="IP 分页"><button id="previousPage" class="button secondary">上一页</button><span id="pageInfo">第 1 / 1 页</span><button id="nextPage" class="button secondary">下一页</button><form id="pageForm"><label for="pageNumber">跳转到</label><input id="pageNumber" type="number" min="1" value="1" required aria-label="跳转页码"><button class="button secondary" type="submit">跳转</button></form></div></section>
 <section id="published" class="panel"><div class="panel-heading"><div><h2>发布结果</h2><p id="publishState">等待普通 100 个和日本 10 个合格 IP。</p><p>每次推送前统一复测、排序；不足时继续补测，保留上次成功结果。</p></div><a id="actions" class="button secondary" target="_blank" rel="noreferrer">查看 GitHub 自动任务</a></div></section>
 <section id="settings" class="panel"><details><summary>优选规则与代理配置</summary>
-<p id="profileState">正在检查代理配置…</p><p>沿用旧安装包测速：一次 512 KiB 小样本，默认 3 Mbps，正文完整度至少 95%。入口连接默认不超过 200 毫秒，代理网站完整响应默认不超过 2500 毫秒。先快速初筛，再代理复测；规则修改在下一批生效。</p>
+<p id="profileState">正在检查代理配置…</p><p>沿用旧安装包测速：一次 512 KiB 小样本，默认 3 Mbps，正文完整度至少 95%。入口 200 毫秒是优先测试线，稍慢但连通的 IP 仍保留。三网站采用与 Clash 一致的统一延迟计时，平均响应默认不超过 2500 毫秒。先快速初筛，再代理复测；规则修改在下一批生效。</p>
 <form id="rulesForm" class="rule-grid"></form><button class="button primary" type="submit" form="rulesForm">保存规则</button><span id="ruleFeedback" role="status"></span>
 <details><summary>更换代理配置或单独检查</summary><p>专用安装包已包含本机配置；需要更换时可自动读取，或导入现有节点链接。</p>
 <div class="header-actions"><button class="button secondary" id="autoImport">自动读取本机代理</button><button class="button secondary" data-action="validate">检查代理内核</button></div>

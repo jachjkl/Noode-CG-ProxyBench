@@ -5,6 +5,7 @@ import copy
 import gzip
 import json
 import math
+import os
 import secrets
 import threading
 import time
@@ -83,6 +84,7 @@ class Pipeline:
         self.status["mihomo"] = self.manager.health()
         state = self.store.state
         self.status.update(candidate_total=len(state.get("pool", [])), tested_count=len(state.get("results", {})),
+                           workflow_run_id=os.environ.get("GITHUB_RUN_ID", ""),
                            qualified_count=sum(x.get("qualified", False) for x in state.get("results", {}).values()),
                            phase=state.get("phase", ""), cycle=state.get("cycle", 1), sources=state.get("sources", {}),
                            entry_screened_count=len(state.get("entry_results", {})),
@@ -115,13 +117,14 @@ class Pipeline:
             key = f"{row['ip']}:{row['port']}"
             result = screens[key]
             row.update(result)
-            if result["entry_connected"] and result["entry_latency_ms"] <= rules["max_entry_latency_ms"]:
+            if result["entry_connected"]:
+                row["entry_preferred"] = result["entry_latency_ms"] <= rules["max_entry_latency_ms"]
                 survivors.append(row)
             elif refresh or key not in self.store.state.setdefault(result_field, {}):
                 self.store.state[result_field][key] = {**row, "key": key, "qualified": False, "status": "Rejected Entry",
                                                   "proxy_probe_count": 0, "tested_at": datetime.now(UTC).isoformat()}
         self.store.commit()
-        return sorted(survivors, key=lambda row: (not row.get("jp_hint", False), row["entry_latency_ms"], row["ip"]))
+        return sorted(survivors, key=lambda row: (not row.get("jp_hint", False), not row["entry_preferred"], row["entry_latency_ms"], row["ip"]))
 
     def profiles(self, pool: list[dict], default: ProxyProfile) -> dict:
         profiles = {"default": default}
@@ -212,11 +215,11 @@ class Pipeline:
                     state = {}
             if state and state.get("profile_fingerprint") != profile.fingerprint:
                 raise ValueError("Profile 已更改，不能混用旧测量；请开始新一轮")
-            if state and self.settings.get("fast_entry_screen") and state.get("measurement_policy") != "entry-proxy-v3":
+            if state and self.settings.get("fast_entry_screen") and state.get("measurement_policy") != "entry-proxy-v4":
                 if state.get("results"):
-                    atomic_write_bytes(self.settings["state_dir"] / "previous-policy-results.json.gz",
+                    atomic_write_bytes(self.settings["state_dir"] / f"previous-policy-{secrets.token_hex(4)}-results.json.gz",
                                        gzip.compress(json.dumps(state["results"]).encode(), mtime=0))
-                state.update(results={}, general_results={}, jp_results={}, entry_results={}, phase="scan", measurement_policy="entry-proxy-v3")
+                state.update(results={}, general_results={}, jp_results={}, entry_results={}, phase="scan", measurement_policy="entry-proxy-v4")
                 self.store.partial = {}
             self.control.path.unlink(missing_ok=True)
             self.store.state = state
@@ -230,7 +233,7 @@ class Pipeline:
                     pool, source_report = self.new_pool(profile, handoff)
                     state = {"run_id": secrets.token_hex(16), "pool": pool, "results": {}, "sources": source_report,
                              "phase": "scan", "cycle": 1, "profile_fingerprint": profile.fingerprint,
-                             "mihomo_version": self.manager.version, "measurement_policy": "entry-proxy-v3"}
+                             "mihomo_version": self.manager.version, "measurement_policy": "entry-proxy-v4"}
                     state.update(session_id=source_report.get("session_id", state["run_id"]),
                                  cycle=source_report.get("cycle", 1),
                                  previous_general=self.incumbent_candidates(profile, "general"),

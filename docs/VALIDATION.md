@@ -53,3 +53,14 @@ The corrected implementation screened 21,538 real saved candidate addresses in 1
 One independently exercised candidate measured approximately 110 ms at entry, 682 ms for a proxied Google request, and 7.583 Mbps for the 512 KiB download sample. A Cloudflare-range candidate also completed the alternative speed sample at 4.496 Mbps. These measurements use the owner's actual VLESS/WebSocket/TLS profile.
 
 There are 232 passing automated tests, including early rejection, separate entry/proxy response criteria, per-candidate listeners, preserved partial results, and reduced dashboard writes. The default Windows installation directory is beside the EXE; an explicit adjacent-install check is available for package verification.
+
+
+## Version 1.1.1 Clash timing and workflow checks
+
+The active Clash configuration uses unified delay and an HTTP gstatic 204 endpoint. A same-profile comparison on four screenshot nodes confirmed the difference: XX 10 measured 735 ms including connection establishment and 82 ms with unified delay. The production core now enables the same timing mode, while retaining authenticated three-site success checks. TCP entry timing above 200 ms only affects priority; reachable slower candidates are preserved.
+
+A bounded real test screened 206 existing same-profile candidates in 1.283 seconds, retaining 191 reachable entries, including entries outside the 200 ms preference. It then measured 100 independent proxy nodes in 95.538 seconds: 85 completed all nine reported site observations and 76 passed both response and original-package speed criteria. Successful speed routes were verified from actual InName connection chains with the exact candidate and no DIRECT. Exit-geography queries were deliberately omitted, so these results do not establish ten Japanese exits or a completed 110-node publication.
+
+All 238 automated tests pass. Workflow regressions cover stale-run isolation, verified download completion, paused retesting, GitHub confirmation before final completion, insufficient-result waiting, and retention/reset of cloud job evidence. Browser state fixtures verify the five-step fluorescent-yellow gradient, animated silver-white sweep, moving completion particles, current/pause/failure states, 12 px module spacing, responsive layout, and reduced-motion behavior. Those fixtures demonstrate interface behavior, not actual network qualification or publication.
+
+The EXE installs beside itself. PowerShell helper defaults also stay beside their scripts, with no hard-coded Desktop installation path. The original decorative particles and selected-button animation remain enabled.

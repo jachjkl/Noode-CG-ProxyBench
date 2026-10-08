@@ -1,5 +1,5 @@
 ﻿param(
-    [string]$InstallRoot = "D:\桌面\软件\Noode-CG-ProxyBench-Local"
+    [string]$InstallRoot = $(Join-Path $PSScriptRoot 'Noode-CG-ProxyBench-Local')
 )
 
 $ErrorActionPreference = "Stop"

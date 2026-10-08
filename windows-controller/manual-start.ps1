@@ -1,7 +1,7 @@
 ﻿param(
     [string]$Repository = "jachjkl/Noode-CG-ProxyBench",
     [string]$Branch = "main",
-    [string]$LocalRoot = "D:\桌面\软件\Noode-CG-ProxyBench-Local",
+    [string]$LocalRoot = $PSScriptRoot,
     [string]$LogPath = "",
     [switch]$ManagedLog
 )

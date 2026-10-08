@@ -203,11 +203,11 @@ class WindowsLocalControlTests(unittest.TestCase):
         self.assertIn("local-runtime.ps1 -Mode Save", workflow)
         self.assertIn("local-runtime.ps1 -Mode ClearRuntime", workflow)
 
-    def test_installer_targets_requested_d_drive_folder_and_startup(self) -> None:
+    def test_installer_defaults_beside_script_and_preserves_startup(self) -> None:
         installer = (ROOT / "scripts" / "install-windows-controller.ps1").read_text(
             encoding="utf-8-sig"
         )
-        self.assertIn(r"D:\桌面\软件\Noode-CG-ProxyBench-Local", installer)
+        self.assertIn("Join-Path $PSScriptRoot 'Noode-CG-ProxyBench-Local'", installer)
         self.assertIn("Startup", installer)
         self.assertIn("notification-watcher.ps1", installer)
         self.assertIn("manual-start.ps1", installer)
