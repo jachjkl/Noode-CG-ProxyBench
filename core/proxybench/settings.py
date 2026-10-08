@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-RULES = {"batch_size": 100, "round_count": 3, "max_proxy_average_latency_ms": 2500.0,
+RULES = {"batch_size": 100, "round_count": 5, "max_proxy_average_latency_ms": 200.0,
          "max_entry_latency_ms": 200.0, "entry_timeout_seconds": 1.2, "entry_concurrency": 256,
          "max_proxy_loss_percent": 0.0, "min_proxy_speed_mbps": 3.0, "download_attempts": 1,
          "download_bytes": 524288, "minimum_completion_ratio": 0.95, "maximum_download_seconds": 7.0,
@@ -30,8 +30,8 @@ def validate_rules(value: dict) -> dict:
             raise ValueError(f"规则超出范围：{key}")
         if key in integers and int(number) != number:
             raise ValueError(f"规则必须是整数：{key}")
-    if not 1 <= rules["batch_size"] <= 100 or rules["round_count"] > 10 or rules["download_attempts"] > 10:
-        raise ValueError("Batch 最多 100，轮数和下载次数最多 10")
+    if not 1 <= rules["batch_size"] <= 100 or not 5 <= rules["round_count"] <= 10 or rules["download_attempts"] > 10:
+        raise ValueError("每批最多 100 个节点；每站须测 5 至 10 次，下载最多 10 次")
     if rules["max_proxy_loss_percent"] > 100 or rules["delay_concurrency"] > 100:
         raise ValueError("丢失率或并发超出范围")
     if rules["speed_concurrency"] > 8 or rules["entry_concurrency"] > 512 or rules["entry_timeout_seconds"] > 5:
@@ -61,7 +61,7 @@ def load_settings(config_path: str | Path) -> dict:
               "fast_entry_screen": bool(block.get("fast_entry_screen", True)),
               "speed_url": block.get("speed_url", "https://dl.google.com/chrome/install/standalonesetup64.exe"),
               "geo_urls": block.get("geo_urls", ["https://ipwho.is/", "https://api.country.is/"]),
-              "rules": validate_rules(block.get("rules", {}))}
+              "rules": validate_rules({**block.get("rules", {}), "round_count": max(5, block.get("rules", {}).get("round_count", 5))})}
     if result["official_sample_count"] < 1 or not 0 <= result["max_cycles"] <= 30:
         raise ValueError("候选规模或补池轮数错误")
     return result
@@ -70,14 +70,8 @@ def load_settings(config_path: str | Path) -> dict:
 def current_rules(settings: dict) -> dict:
     path = settings["rules_path"]
     saved = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    # Upgrade the former untouched speed preset, preserving independently edited response rules.
-    former = {"min_proxy_speed_mbps": 16.0, "download_attempts": 3,
-              "download_bytes": 2097152, "download_timeout_seconds": 15.0}
-    if isinstance(saved, dict) and all(saved.get(key) == value for key, value in former.items()):
-        saved = {**saved, **{key: RULES[key] for key in former}}
-    if isinstance(saved, dict):
-        for key, previous in {"max_proxy_average_latency_ms": 200.0, "request_timeout_seconds": 5.0,
-                              "delay_concurrency": 20, "speed_concurrency": 1}.items():
-            if saved.get(key) == previous:
-                saved[key] = RULES[key]
-    return validate_rules({**settings["rules"], **saved})
+    # Saved owner choices are authoritative, even when they equal an older preset.
+    merged = {**settings["rules"], **saved}
+    # The owner explicitly replaced the former three-probe method with at least five observations.
+    merged["round_count"] = max(5, merged.get("round_count", 5))
+    return validate_rules(merged)

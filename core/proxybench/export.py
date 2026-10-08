@@ -19,7 +19,9 @@ PUBLIC_FIELDS = {"ip", "port", "rank", "lane", "jp_hint", "geo_country", "geo_ve
                  "github_rounds_ms", "github_average_ms", "round_averages_ms", "proxy_average_latency_ms",
                  "proxy_loss_percent", "download_rounds_mbps", "proxy_download_average_mbps",
                  "proxy_download_median_mbps", "proxy_download_average_mbytes", "stability_score", "tested_at",
-                 "site_success_count", "latency_jitter_ms", "latency_variance", "qualified"}
+                 "site_success_count", "latency_jitter_ms", "latency_variance", "qualified", "rules", "latency_method",
+                 "google_retained_ms", "google_discarded_ms", "cloudflare_retained_ms", "cloudflare_discarded_ms",
+                 "github_retained_ms", "github_discarded_ms", "entry_passed", "latency_passed"}
 ARTIFACTS = ("nodes.txt", "nodes.json", "nodes.csv", "api.json", "ip.zip")
 TRANSACTION_FILES = (*ARTIFACTS, "health.json")
 

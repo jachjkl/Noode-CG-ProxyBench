@@ -268,4 +268,4 @@ class SessionCloudTests(unittest.TestCase):
             fresh = [{**pool(1)[0], "ip": f"104.17.2.{i + 1}", "source_types": []} for i in range(110)]
             handoff.write_bytes(gzip.compress(json.dumps({"pool": fresh, "report": {**report, "seed": "new", "cycle": 2}}).encode()))
             self.assertTrue(pipeline.run(resume=True, handoff=True)["published"])
-            self.assertEqual(competitions[-1], {x["ip"] for x in fresh})
+            self.assertEqual(competitions[-1], {x["ip"] for x in fresh[:100]})

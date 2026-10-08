@@ -57,9 +57,9 @@ class BenchmarkTests(unittest.TestCase):
             results = Benchmark(manager, rules, Control(Path(directory)), geo_urls=["https://ipwho.is/"]).batch(pool(100), object())
         self.assertEqual(len(manager.loads), 1)
         self.assertEqual(len(results), 100)
-        self.assertEqual(len(manager.controller.calls), 900)
+        self.assertEqual(len(manager.controller.calls), 1500)
         self.assertEqual(len({row["proxy_average_latency_ms"] for row in results}), 100)
-        for index in range(9):
+        for index in range(15):
             chunk = manager.controller.calls[index * 100:(index + 1) * 100]
             self.assertEqual(len({row[0] for row in chunk}), 100)
             self.assertEqual({row[1] for row in chunk}, {SITES[index % 3][1]})
@@ -115,9 +115,9 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(sorted([fast_speed, fast_latency], key=ranking_key)[0], fast_latency)
 
     def test_exact_averages(self):
-        result = {"probes": {site: [{"success": True, "latency_ms": value}] * 3 for (site, _, _), value in zip(SITES, (90, 105, 120))}}
+        result = {"probes": {site: [{"success": True, "latency_ms": value}] * 5 for (site, _, _), value in zip(SITES, (90, 105, 120))}}
         calculate(result, RULES)
-        self.assertEqual(result["round_averages_ms"], [105, 105, 105])
+        self.assertEqual(result["round_averages_ms"], [105] * 5)
         self.assertEqual(result["proxy_average_latency_ms"], 105)
 
     def test_rules_reject_nan_unknown_and_unsafe_concurrency(self):

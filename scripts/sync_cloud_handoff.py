@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 def sources(repository: str, ref: str, relative_path: str = "data/handoff/cloud-raw10000.json.gz") -> list[str]:
-    if relative_path not in {"data/handoff/cloud-raw10000.json.gz", "data/handoff/proxybench-pool.json.gz"}:
+    if relative_path not in {"data/handoff/cloud-raw10000.json.gz", "data/handoff/proxybench-pool.json.gz", "output/nodes.json"}:
         raise ValueError("交接路径不在白名单")
     raw = f"https://raw.githubusercontent.com/{repository}/{ref}/{relative_path}"
     return [f"https://ghfast.top/{raw}", f"https://gh.ddlc.top/{raw}",
@@ -27,7 +27,8 @@ def sources(repository: str, ref: str, relative_path: str = "data/handoff/cloud-
 
 
 def download(destination: Path, expected: str, urls: list[str], *, timeout: float = 30,
-             emit=print) -> None:
+             emit=print, checkpoint=lambda: None) -> None:
+    checkpoint()
     expected = expected.lower()
     if len(expected) != 64 or any(c not in "0123456789abcdef" for c in expected):
         raise ValueError("无效的可信 SHA-256")
@@ -41,6 +42,7 @@ def download(destination: Path, expected: str, urls: list[str], *, timeout: floa
         raise RuntimeError("未找到 curl，无法执行有总时限的候选下载。")
     destination.parent.mkdir(parents=True, exist_ok=True)
     for index, url in enumerate(urls, 1):
+        checkpoint()
         emit(f"下载云端候选 {index}/{len(urls)}：{url}（最多 {timeout:g} 秒）")
         fd, name = tempfile.mkstemp(prefix=".cloud-handoff-", suffix=".tmp", dir=destination.parent)
         os.close(fd)
@@ -57,6 +59,7 @@ def download(destination: Path, expected: str, urls: list[str], *, timeout: floa
                 raise RuntimeError(result.stderr.decode("utf-8", errors="replace")[:300])
             if not valid(temporary):
                 raise ValueError("SHA-256 不匹配，拒绝使用过期或被修改的候选文件")
+            checkpoint()
             os.replace(temporary, destination)
             emit("云端候选下载并校验成功，即将开始本地网络检查与测速。")
             return

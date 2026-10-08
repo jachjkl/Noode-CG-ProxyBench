@@ -9,14 +9,28 @@ import threading
 import time
 
 from .profile import safe_error
-from .settings import SITES
+from .settings import SITES, validate_rules
 
 
 def ranking_key(result: dict) -> tuple:
     return (result.get("proxy_loss_percent", 100), -result.get("site_success_count", 0),
-            result.get("entry_latency_ms", math.inf),
             result["proxy_average_latency_ms"] if result.get("proxy_average_latency_ms") is not None else math.inf, result.get("latency_jitter_ms", math.inf),
-            -result.get("proxy_download_average_mbps", 0), result["ip"], result["port"])
+            -result.get("proxy_download_average_mbps", 0), result.get("entry_latency_ms", math.inf), result["ip"], result["port"])
+
+
+def limit_failure(result: dict, rules: dict) -> str:
+    """Revoke a cached pass when its real measurements exceed the currently saved limits."""
+    if result.get("entry_latency_ms") is not None and result["entry_latency_ms"] > rules["max_entry_latency_ms"]:
+        return "Rejected Entry"
+    if result.get("proxy_loss_percent") is not None and result["proxy_loss_percent"] > rules["max_proxy_loss_percent"]:
+        return "Rejected Loss"
+    if result.get("proxy_average_latency_ms") is not None and result["proxy_average_latency_ms"] > rules["max_proxy_average_latency_ms"]:
+        return "Rejected Latency"
+    if result.get("proxy_download_average_mbps") is not None and result["proxy_download_average_mbps"] < rules["min_proxy_speed_mbps"]:
+        return "Rejected Speed"
+    if result.get("rules", {}).get("round_count", 5) < 5:
+        return "Retest Required"
+    return ""
 
 
 def calculate(result: dict, rules: dict) -> None:
@@ -29,23 +43,29 @@ def calculate(result: dict, rules: dict) -> None:
         latencies = [probe["latency_ms"] for probe in probes[site]]
         result[f"{site}_rounds_ms"] = latencies
         values = [number if number is not None else rules["request_timeout_seconds"] * 1000 for number in latencies]
-        result[f"{site}_average_ms"] = statistics.fmean(values)
+        ordered = sorted(values)
+        retained = ordered[1:-1]
+        result[f"{site}_retained_ms"] = retained
+        result[f"{site}_discarded_ms"] = [ordered[0], ordered[-1]]
+        result[f"{site}_average_ms"] = statistics.fmean(retained)
     averages = [statistics.fmean(result["probes"][site][index]["latency_ms"]
                                 if result["probes"][site][index]["success"] else rules["request_timeout_seconds"] * 1000
                                 for site, _, _ in SITES) for index in range(rounds)]
     result["round_averages_ms"] = averages
-    result["proxy_average_latency_ms"] = statistics.fmean(averages)
+    result["proxy_average_latency_ms"] = statistics.fmean(result[f"{site}_average_ms"] for site, _, _ in SITES)
+    result["latency_method"] = "per-site-trim-one-low-and-high-v1"
     result["latency_jitter_ms"] = statistics.pstdev(averages)
     result["latency_variance"] = statistics.pvariance(averages)
     result["stability_score"] = 100 / (1 + result["latency_jitter_ms"])
-    result["latency_passed"] = result["proxy_loss_percent"] <= rules["max_proxy_loss_percent"] and result["proxy_average_latency_ms"] <= rules["max_proxy_average_latency_ms"]
+    result["entry_passed"] = (result.get("entry_latency_ms") is None or result["entry_latency_ms"] <= rules["max_entry_latency_ms"])
+    result["latency_passed"] = result["entry_passed"] and result["proxy_loss_percent"] <= rules["max_proxy_loss_percent"] and result["proxy_average_latency_ms"] <= rules["max_proxy_average_latency_ms"]
 
 
 class Benchmark:
     def __init__(self, manager, rules: dict, control, *, geo_urls: list[str], update=None, cloudflare_url="https://cp.cloudflare.com/",
                  speed_url="https://dl.google.com/chrome/install/standalonesetup64.exe") -> None:
         self.manager = manager
-        self.rules = copy.deepcopy(rules)
+        self.rules = copy.deepcopy(validate_rules(rules))
         self.control = control
         self.geo_urls = geo_urls
         self.speed_url = speed_url

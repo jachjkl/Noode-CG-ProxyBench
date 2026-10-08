@@ -74,16 +74,16 @@ class LegacySpeedTests(unittest.TestCase):
         with self.assertRaises(RequestError):
             self.measure(b"x" * 1000, status=302)
 
-    def test_saved_former_preset_migrates_without_erasing_response_edit(self):
+    def test_saved_former_preset_is_authoritative_without_silent_migration(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "rules.json"
             path.write_text(json.dumps({"min_proxy_speed_mbps": 16, "download_attempts": 3,
                                         "download_bytes": 2097152, "download_timeout_seconds": 15,
                                         "max_proxy_average_latency_ms": 750}))
             rules = current_rules({"rules_path": path, "rules": RULES})
-        self.assertEqual(rules["download_bytes"], 524288)
-        self.assertEqual(rules["download_attempts"], 1)
-        self.assertEqual(rules["min_proxy_speed_mbps"], 3)
+        self.assertEqual(rules["download_bytes"], 2097152)
+        self.assertEqual(rules["download_attempts"], 3)
+        self.assertEqual(rules["min_proxy_speed_mbps"], 16)
         self.assertEqual(rules["max_proxy_average_latency_ms"], 750)
 
     def test_custom_speed_threshold_survives_migration(self):

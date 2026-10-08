@@ -9,6 +9,7 @@ import threading
 
 from core.io_utils import atomic_write_json
 
+from .benchmark import limit_failure
 from .execution import cli_python
 from .mihomo_manager import owned_core_running
 from .profile import ProxyProfile, discover_profiles, import_discovered, save_import
@@ -29,10 +30,31 @@ class BenchDashboard:
         self.file_cache = {}
         self.preserve_on_close = False
         self.closing = False
+        self.cloud_refresh_thread = None
+        self.cloud_published = {"status": "Checking", "nodes": [], "total": 0, "general": 0, "japan": 0, "message": "正在读取 GitHub 已发布 IP"}
         prior = self.read_cached(self.settings["state_dir"] / "live.json", default={})
         if (self.settings["state_dir"] / "batch-state.json").exists() and prior.get("status") in {"Running", "Paused", "Stopped", "Failed"}:
             self.preserve_on_close = True
         atomic_write_json(self.settings["state_dir"] / "session.json", {"session_id": secrets.token_hex(16)})
+
+    def refresh_cloud(self) -> None:
+        if self.closing:
+            return
+        if self.cloud_refresh_thread and self.cloud_refresh_thread.is_alive():
+            return
+        def fetch():
+            from .cloud_nodes import refresh
+            from .desktop_cloud import DesktopCloudController
+            try:
+                client = DesktopCloudController(self.settings)
+                client.update = lambda **_: None  # Auxiliary reads must not overwrite the active workflow status.
+                client.control.path = self.settings["state_dir"] / "cloud-read-control.json"
+                client.control.path.unlink(missing_ok=True)
+                self.cloud_published = refresh(client)
+            except Exception:
+                self.cloud_published = {**self.cloud_published, "status": "Unavailable", "message": "云端读取暂时失败，可点击刷新；已缓存的发布顺序保持不变"}
+        self.cloud_refresh_thread = threading.Thread(target=fetch, daemon=True)
+        self.cloud_refresh_thread.start()
 
     def read_cached(self, path, *, compressed=False, default=None):
         if not path.exists():
@@ -67,6 +89,10 @@ class BenchDashboard:
         active_rows = live.get("candidates", []) if same_pool or not cloud or live.get("phase") == "validation" else []
         for row in active_rows:
             measured[f"{row['ip']}:{row['port']}"] = row
+        saved_rules = current_rules(settings)
+        for key, row in measured.items():
+            if row.get("qualified") and (failure := limit_failure(row, saved_rules)):
+                measured[key] = {**row, "qualified": False, "status": failure}
         if kind == "published-results":
             rows = self.read_cached(settings["output_dir"] / "nodes.json", default=[])
         elif kind == "live-results":
@@ -143,23 +169,37 @@ class BenchDashboard:
         if self.process and self.process.poll() is not None and self.log_handle:
             self.log_handle.close()
             self.log_handle = None
+        saved_rules = current_rules(settings)
+        cached_results = dict(self.read_cached(settings["state_dir"] / "benchmark-results.json.gz", compressed=True, default={}))
+        partial = self.read_cached(settings["state_dir"] / "partial-batch.json", default={})
+        if partial.get("run_id") == live.get("run_id") and partial.get("phase") == live.get("phase"):
+            cached_results.update(partial.get("results", {}))
+        if cached_results:
+            live["qualified_count"] = sum(bool(row.get("qualified")) and not limit_failure(row, saved_rules) for row in cached_results.values())
         return {"live": live, "profile": profile, "rules": current_rules(settings), "published": health,
                 "running": running,
                 "local_running": local_running,
                 "actions_url": f"https://github.com/{self.legacy.repository}/actions",
-                "cloud": cloud, "workflow": progress(live, cloud, health),
+                "cloud": cloud, "cloud_published": {key: value for key, value in self.cloud_published.items() if key != "nodes"}, "workflow": progress(live, cloud, health),
                 "can_resume": (settings["state_dir"] / "batch-state.json").exists()}
 
     def action(self, action: str, payload: dict) -> dict:
         with self.lock:
             settings = self.settings
+            if action == "refresh-cloud-results":
+                self.refresh_cloud()
+                return {"requested": "refresh-cloud-results"}
+            if action == "cloud-published-results":
+                nodes = self.cloud_published.get("nodes", [])
+                allowed = {"ip", "port", "rank", "lane", "geo_country", "country", "entry_latency_ms", "proxy_average_latency_ms", "proxy_download_average_mbps"}
+                return {"rows": [{key: value for key, value in row.items() if key in allowed} for row in nodes], "total": len(nodes)}
             running = bool(self.process and self.process.poll() is None) or owned_core_running(settings["runtime_dir"])
             if action == "resume-testing":
                 return self.action("resume-paused" if running else "resume", {})
             if action == "rules":
-                rules = validate_rules(payload)
+                rules = validate_rules({**current_rules(settings), **payload})
                 atomic_write_json(settings["rules_path"], rules)
-                return {"saved": True, "rules": rules, "effective": "下一批生效" if running else "立即生效"}
+                return {"saved": True, "rules": rules, "effective": "已保存到本机，下一批生效；再次打开也使用这些规则" if running else "已保存到本机，立即生效；再次打开也使用这些规则"}
             if action in {"pause", "stop", "resume-paused"}:
                 if action == "stop" and not self.closing:
                     self.preserve_on_close = True
@@ -226,10 +266,12 @@ class BenchDashboard:
         cloud = self.read_cached(self.settings["state_dir"] / "cloud-live.json", default={})
         self.preserve_on_close |= live.get("status") == "Failed" or cloud.get("status") == "Failed" or cloud.get("interrupted", False)
         self.closing = True
+        atomic_write_json(self.settings["state_dir"] / "cloud-read-control.json", {"action": "stop"})
         self.action("stop", {})
 
     def ready_to_close(self) -> bool:
-        return not (self.process and self.process.poll() is None or owned_core_running(self.settings["runtime_dir"]))
+        return not (self.process and self.process.poll() is None or owned_core_running(self.settings["runtime_dir"]) or
+                    self.cloud_refresh_thread and self.cloud_refresh_thread.is_alive())
 
     def finish_close(self, normal: bool) -> bool:
         """Delete only known transient files after the owned task releases its locks."""

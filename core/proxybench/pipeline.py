@@ -119,10 +119,10 @@ class Pipeline:
             key = f"{row['ip']}:{row['port']}"
             result = screens[key]
             row.update(result)
-            if result["entry_connected"]:
-                row["entry_preferred"] = result["entry_latency_ms"] <= rules["max_entry_latency_ms"]
+            if result["entry_connected"] and result["entry_latency_ms"] <= rules["max_entry_latency_ms"]:
+                row["entry_preferred"] = True
                 survivors.append(row)
-            elif refresh or key not in self.store.state.setdefault(result_field, {}):
+            else:
                 self.store.state[result_field][key] = {**row, "key": key, "qualified": False, "status": "Rejected Entry",
                                                   "proxy_probe_count": 0, "tested_at": datetime.now(UTC).isoformat()}
         self.store.commit()
@@ -169,8 +169,9 @@ class Pipeline:
                     benchmark = Benchmark(self.manager, rules, self.control, geo_urls=self.settings["geo_urls"], update=self.update,
                                           cloudflare_url=self.cloudflare_url, speed_url=self.settings.get("speed_url", "https://dl.google.com/chrome/install/standalonesetup64.exe"))
                     def completed(result):
-                        state[result_field][result["key"]] = result
-                        self.store.save_partial(result)
+                        with self.update_lock:
+                            state[result_field][result["key"]] = result
+                            self.store.save_partial(result)
                     benchmark.batch(batch, profiles, completed)
                     break
                 except CoreError:
@@ -242,11 +243,11 @@ class Pipeline:
                     if "authorized_proxy_candidate" not in item.get("source_types", []):
                         item["port"] = profile.port
                 self.store.partial = {}
-            if state and self.settings.get("fast_entry_screen") and state.get("measurement_policy") != "entry-proxy-v4":
+            if state and state.get("measurement_policy") != "entry-proxy-v6-trimmed5":
                 if state.get("results"):
                     atomic_write_bytes(self.settings["state_dir"] / f"previous-policy-{secrets.token_hex(4)}-results.json.gz",
                                        gzip.compress(json.dumps(state["results"]).encode(), mtime=0))
-                state.update(results={}, general_results={}, jp_results={}, entry_results={}, phase="scan", measurement_policy="entry-proxy-v4")
+                state.update(results={}, general_results={}, jp_results={}, entry_results={}, phase="scan", measurement_policy="entry-proxy-v6-trimmed5")
                 self.store.partial = {}
             self.control.path.unlink(missing_ok=True)
             self.store.state = state
@@ -261,7 +262,7 @@ class Pipeline:
                     pool, source_report = self.new_pool(profile, handoff)
                     state = {"run_id": secrets.token_hex(16), "pool": pool, "results": {}, "sources": source_report,
                              "phase": "scan", "cycle": 1, "profile_fingerprint": profile.fingerprint,
-                             "mihomo_version": self.manager.version, "measurement_policy": "entry-proxy-v4"}
+                             "mihomo_version": self.manager.version, "measurement_policy": "entry-proxy-v6-trimmed5"}
                     state.update(session_id=source_report.get("session_id", state["run_id"]),
                                  cycle=source_report.get("cycle", 1),
                                  previous_general=self.incumbent_candidates(profile, "general"),
@@ -290,7 +291,7 @@ class Pipeline:
                         self.store.commit()
                     qualified = sorted((x for x in state["results"].values() if x.get("qualified")), key=ranking_key)
                     if state["phase"] == "general_retest":
-                        general_pool = self.competition_candidates(qualified[:200], state.get("previous_general", []))
+                        general_pool = self.competition_candidates(qualified[:100], state.get("previous_general", []))
                         self.scan(general_pool, "general_results", profiles, fixed_rules=state["competition_rules"])
                         self.refresh_retests("general_results")
                         qualified = sorted((x for x in state["results"].values() if x.get("qualified")), key=ranking_key)
@@ -300,7 +301,7 @@ class Pipeline:
                     generals = self.unique_ips(generals)[:100]
                     general_ips = {item["ip"] for item in generals}
                     if state["phase"] == "jp_retest":
-                        jp_pool = self.competition_candidates([x for x in qualified if x.get("jp_qualified")], state.get("previous_jp", []))
+                        jp_pool = self.competition_candidates([x for x in qualified if x.get("jp_qualified") and x["ip"] not in general_ips][:10], state.get("previous_jp", []))
                         jp_pool = [x for x in jp_pool if x["ip"] not in general_ips]
                         for offset in range(0, len(jp_pool), 20):
                             self.scan(jp_pool[offset:offset + 20], "jp_results", profiles, fixed_rules=state["competition_rules"])
@@ -312,6 +313,12 @@ class Pipeline:
                         self.store.commit()
                     japan = self.unique_ips(sorted((x for x in state.get("jp_results", {}).values()
                                                     if x.get("qualified") and x.get("jp_qualified") and x["ip"] not in general_ips), key=ranking_key))[:10]
+                    latest = current_rules(self.settings)
+                    if latest != state["competition_rules"]:
+                        state.update(phase="general_retest", competition_rules=latest, general_results={}, jp_results={})
+                        self.store.commit()
+                        self.update(stage="规则已更新，按保存的新规则重新复测", status="Running")
+                        continue
                     final = [{**item, "lane": "general"} for item in generals] + [{**item, "lane": "jp_append"} for item in japan]
                     qualified = [x for x in state["results"].values() if x.get("qualified")]
                     report = {**state["sources"], "status": "ok" if len(final) == 110 else "needs_more",

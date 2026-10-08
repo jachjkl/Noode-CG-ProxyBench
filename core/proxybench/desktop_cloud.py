@@ -79,7 +79,7 @@ class DesktopCloudController(CloudController):
         self.update(status="Downloading", stage="通过多镜像下载并校验候选 IP", handoff_ready=True)
         try:
             download(self.root / "data/handoff/proxybench-pool.json.gz", metadata["sha256"],
-                     sources(REPOSITORY, metadata["ref"], "data/handoff/proxybench-pool.json.gz"), timeout=8)
+                     sources(REPOSITORY, metadata["ref"], "data/handoff/proxybench-pool.json.gz"), timeout=8, checkpoint=self.control.checkpoint)
         except RuntimeError:
             raise CloudError("所有候选镜像暂时不可用，已保留旧候选；可继续重试") from None
         # The checked pool already contains its source report and incumbent nodes.

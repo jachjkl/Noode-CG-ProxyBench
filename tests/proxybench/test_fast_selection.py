@@ -26,17 +26,17 @@ class FastSelectionTests(unittest.TestCase):
         manager.controller.delay = delay
         with tempfile.TemporaryDirectory() as directory:
             rows = Benchmark(manager, {**RULES, "round_cooldown_seconds": 0}, Control(Path(directory)), geo_urls=[]).batch(pool(10), object())
-        self.assertEqual(len(manager.controller.calls), 82)
+        self.assertEqual(len(manager.controller.calls), 136)
         self.assertEqual(rows[0]["proxy_probe_count"], 1)
         self.assertFalse(rows[0]["qualified"])
-        self.assertTrue(all(row["qualified"] and row["proxy_probe_count"] == 9 for row in rows[1:]))
+        self.assertTrue(all(row["qualified"] and row["proxy_probe_count"] == 15 for row in rows[1:]))
 
     def test_good_entry_is_not_rejected_for_realistic_worker_end_to_end_response(self):
         manager = FakeManager()
         manager.controller.delay = lambda *_: {"success": True, "latency_ms": 900}
         candidates = [{**pool(1)[0], "entry_latency_ms": 80, "entry_connected": True}]
         with tempfile.TemporaryDirectory() as directory:
-            row = Benchmark(manager, {**RULES, "round_cooldown_seconds": 0}, Control(Path(directory)), geo_urls=[]).batch(candidates, object())[0]
+            row = Benchmark(manager, {**RULES, "max_proxy_average_latency_ms": 1500, "round_cooldown_seconds": 0}, Control(Path(directory)), geo_urls=[]).batch(candidates, object())[0]
         self.assertTrue(row["qualified"])
         self.assertEqual(row["entry_latency_ms"], 80)
         self.assertEqual(row["proxy_average_latency_ms"], 900)
@@ -80,9 +80,8 @@ class FastSelectionTests(unittest.TestCase):
                 return {"entry_connected": True, "entry_latency_ms": latency}
             with patch("core.proxybench.pipeline.entry_probe", side_effect=screen):
                 survivors = pipeline.screen_candidates(pipeline.store.state["pool"])
-            self.assertEqual([row["ip"] for row in survivors], ["104.16.0.1", "104.16.0.3", "104.16.0.2"])
-            self.assertFalse(survivors[-1]["entry_preferred"])
-            self.assertNotIn("104.16.0.2:443", pipeline.store.state["results"])
+            self.assertEqual([row["ip"] for row in survivors], ["104.16.0.1", "104.16.0.3"])
+            self.assertEqual(pipeline.store.state["results"]["104.16.0.2:443"]["status"], "Rejected Entry")
             self.assertEqual(pipeline.store.state["results"][completed["key"]], completed)
             self.assertEqual(pipeline.store.state["results"]["104.16.0.4:443"]["status"], "Rejected Entry")
 

@@ -12,6 +12,6 @@ Local stop, pause, abnormal shutdown, and publication failure retain completed m
 
 The cumulative cloud candidate queue is saved before profile acceptance, so failed validation does not erase untested first-round inputs. Starting in a new window creates a new discovery session; explicit resume retains the saved session and handoff.
 
-Pause waits at bounded checkpoints. Resume removes the pause marker; stop saves state and cleans up the owned core. Rule changes apply to the next batch, while final competitors use one captured ruleset. Measurements from different profile fingerprints cannot be mixed.
+Pause waits at bounded checkpoints. Resume removes the pause marker; stop saves state and cleans up the owned core. Rule changes apply to the next batch. Final competitors use one captured ruleset, and any later edit before publication restarts competition under the latest saved rules. Measurements from different profile fingerprints or the former three-observation policy cannot be mixed with current results.
 
 Output replacement has a durable publication transaction backup. A Windows pending archive stores the exact bytes and digest for retry. Only Ubuntu confirmation of the same digest removes that pending payload; checkpoints remain. Source failures, runtime errors, and insufficient qualification never replace the last successful subscription.

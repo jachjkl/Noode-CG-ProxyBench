@@ -1470,6 +1470,7 @@ def make_handler(state: DashboardState, server_ref: dict[str, ThreadingHTTPServe
             sys.path.insert(0, str(app))
             from core.proxybench.dashboard import BenchDashboard
             bench = BenchDashboard(state)
+            bench.refresh_cloud()
         return bench
 
     class Handler(BaseHTTPRequestHandler):
