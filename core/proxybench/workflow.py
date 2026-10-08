@@ -19,7 +19,7 @@ def progress(live: dict, cloud: dict, health: dict) -> list[dict]:
     publish = job("cloud-publish", "云端发布最优IP")
     download = next((step for step in local.get("steps", [])
                      if step.get("name") == "Decode digest-verified cloud candidate handoff"), {})
-    phase = live.get("phase", "")
+    phase = live.get("publication_phase") or live.get("phase", "")
     cloud_run = cloud.get("run_id")
     local_active = bool(live.get("local_process_active"))
     new_local_session = (live.get("session_id") and live.get("session_id") == cloud.get("session_id")

@@ -28,7 +28,7 @@ def validate_result_files(files: dict[str, bytes]) -> None:
         if {f"output/{name}" for name in ARTIFACTS} - files.keys():
             raise ValueError("发布结果缺少输出文件，必须包含 output/nodes.txt")
         records = json.loads(files["output/nodes.json"])
-        if not gate(records):
+        if not gate(records, allow_partial=health.get("manual_publication") is True):
             raise ValueError("拒绝不满足 100+10+110 的发布结果")
         if files["output/nodes.txt"] != nodes_text(records).encode("utf-8"):
             raise ValueError("nodes.txt 必须与优选结果一致，使用 IP:端口#国家代码 格式")
@@ -42,7 +42,7 @@ def pack(root: Path, kind: str) -> bytes:
         health = json.loads((root / "output/health.json").read_text(encoding="utf-8"))
         if health.get("published"):
             records = json.loads((root / "output/nodes.json").read_text(encoding="utf-8"))
-            if not gate(records):
+            if not gate(records, allow_partial=health.get("manual_publication") is True):
                 raise ValueError("云端发布门槛校验失败")
         else:
             allowed = {"output/health.json", "data/handoff/proxybench-attempted.json.gz"}

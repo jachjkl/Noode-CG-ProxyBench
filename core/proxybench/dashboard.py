@@ -6,6 +6,7 @@ import secrets
 import statistics
 import subprocess
 import threading
+import time
 
 from core.io_utils import atomic_write_json
 
@@ -13,6 +14,7 @@ from .benchmark import limit_failure
 from .execution import cli_python
 from .mihomo_manager import owned_core_running
 from .profile import ProxyProfile, discover_profiles, import_discovered, save_import
+from .run_clock import RunClock
 from .settings import current_rules, load_settings, validate_rules
 from .workflow import progress
 
@@ -24,6 +26,8 @@ class BenchDashboard:
         self.root = legacy_state.root
         self.app = self.root / "app" if (self.root / "app/config.yaml").exists() else self.root
         self.settings = load_settings(self.app / "config.yaml")
+        self.opened_at = time.monotonic()
+        self.clock = RunClock(self.settings["state_dir"] / "run-timing.json")
         self.process = None
         self.lock = threading.RLock()
         self.log_handle = None
@@ -182,7 +186,12 @@ class BenchDashboard:
             cached_results.update(partial.get("results", {}))
         if cached_results:
             live["qualified_count"] = sum(bool(row.get("qualified")) and not limit_failure(row, saved_rules) for row in cached_results.values())
+        control = self.read_cached(settings["state_dir"] / "control.json", default={})
+        with self.lock:
+            timing = {**self.clock.snapshot(running, control.get("action") == "pause"),
+                      "software_seconds": max(0.0, time.monotonic() - self.opened_at)}
         return {"live": live, "profile": profile, "rules": current_rules(settings), "published": health,
+                "timing": timing,
                 "running": running,
                 "local_running": local_running,
                 "actions_url": f"https://github.com/{self.legacy.repository}/actions",
@@ -212,9 +221,22 @@ class BenchDashboard:
                 path = settings["state_dir"] / "control.json"
                 if action == "resume-paused":
                     path.unlink(missing_ok=True)
+                    if running:
+                        self.clock.start()
                 else:
                     atomic_write_json(path, {"action": action})
+                    if action == "pause":
+                        self.clock.stop()
                 return {"requested": action}
+            if action == "publish":
+                pending = (self.app / "runtime/pending-publish/manifest.json").exists()
+                if not running and not pending and not (settings["state_dir"] / "batch-state.json").exists() and not (settings["output_dir"] / "nodes.json").exists():
+                    raise ValueError("没有可推送的已测结果，请先开始优选")
+                atomic_write_json(settings["state_dir"] / "publish-request.json", {"requested": True})
+                if running:
+                    (settings["state_dir"] / "control.json").unlink(missing_ok=True)
+                    self.clock.start()
+                    return {"requested": "publish", "message": "手动推送已排队：当前批次结束后复测已有结果，再推送 GitHub"}
             if action == "discover":
                 references = discover_profiles("jackoyu.dpdns.org")
                 # One choice per immutable protocol parameter set; hide credentials and server values.
@@ -238,15 +260,17 @@ class BenchDashboard:
                 if chosen is None:
                     raise ValueError("未找到匹配配置，请导入现有节点链接")
                 return import_discovered(chosen, settings["profile"])
-            if action in {"start", "resume", "continue-fetch", "validate", "auto-start"}:
+            if action in {"start", "resume", "continue-fetch", "validate", "auto-start", "publish"}:
                 if running:
                     raise ValueError("已有任务正在运行")
                 if action in {"start", "auto-start", "resume", "continue-fetch"}:
                     self.preserve_on_close = False
+                    (settings["state_dir"] / "publish-request.json").unlink(missing_ok=True)
                 if action != "auto-start":
                     ProxyProfile.load(settings["profile"])
                 command = "validate-runtime" if action == "validate" else "auto-cloud"
-                arguments = ["--mode", "continue" if action == "continue-fetch" else "resume"] if action in {"resume", "continue-fetch"} else []
+                mode = {"continue-fetch": "continue", "resume": "resume", "publish": "publish"}.get(action)
+                arguments = ["--mode", mode] if mode else []
                 atomic_write_json(settings["state_dir"] / "cloud-live.json", {"repository": self.legacy.repository,
                                   "mode": action,
                                   "status": "Preparing", "stage": "检查规则代理内核" if action == "validate" else "正在准备云端任务和规则代理"})
@@ -260,7 +284,9 @@ class BenchDashboard:
                                                 env=env,
                                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 self.legacy.process = self.process
-                return {"started": True, "action": action}
+                self.clock.start(reset=action in {"start", "auto-start"})
+                return {"started": True, "action": action,
+                        "message": "正在复测并推送已有合格结果；本次不获取新 IP" if action == "publish" else "任务已启动，获取与实测结果会自动更新"}
             if action == "cloud-start":
                 return self.action("auto-start", {})
             if action in {"results", "live-results", "candidates", "published-results"}:
@@ -272,6 +298,7 @@ class BenchDashboard:
         cloud = self.read_cached(self.settings["state_dir"] / "cloud-live.json", default={})
         self.preserve_on_close |= live.get("status") == "Failed" or cloud.get("status") == "Failed" or cloud.get("interrupted", False)
         self.closing = True
+        self.clock.stop()
         atomic_write_json(self.settings["state_dir"] / "cloud-read-control.json", {"action": "stop"})
         self.action("stop", {})
 

@@ -16,7 +16,7 @@ from core.io_utils import atomic_write_bytes, atomic_write_json
 from sources.common import merge
 from sources.pool import build
 
-from .benchmark import Benchmark, ranking_key
+from .benchmark import Benchmark, limit_failure, ranking_key
 from .controller import CoreError
 from .entry_probe import probe as entry_probe
 from .export import publish, recover
@@ -106,6 +106,9 @@ class Pipeline:
         with concurrent.futures.ThreadPoolExecutor(max_workers=rules["entry_concurrency"]) as executor:
             for offset in range(0, len(remaining), rules["entry_concurrency"]):
                 self.control.checkpoint()
+                if result_field == "results" and self.control.publication_requested():
+                    self.store.commit()
+                    return []
                 self.update(stage="快速初筛候选入口端口", status="Running")
                 futures = {executor.submit(entry_probe, row, rules["entry_timeout_seconds"]): row for row in remaining[offset:offset + rules["entry_concurrency"]]}
                 for future in concurrent.futures.as_completed(futures):
@@ -149,6 +152,8 @@ class Pipeline:
         batch_number = 0
         while remaining:
             self.control.checkpoint()
+            if result_field == "results" and self.control.publication_requested():
+                break  # Finish the current batch before switching to the publication competition.
             if self.settings.get("auto_refresh_profile") and time.monotonic() - self.last_profile_check >= self.settings["profile_refresh_seconds"]:
                 self.last_profile_check = time.monotonic()
                 refreshed = refresh_existing(self.settings["profile"])
@@ -209,24 +214,24 @@ class Pipeline:
             item["proxy_name"] = f"PB-{index:06d}"
         return pool, report
 
-    def run(self, resume: bool = False, handoff: bool = False) -> dict:
+    def run(self, resume: bool = False, handoff: bool = False, publish_only: bool = False) -> dict:
         while True:
             try:
                 if self.settings.get("auto_refresh_profile"):
                     self.update(profile_update=refresh_existing(self.settings["profile"]))
                     self.last_profile_check = time.monotonic()
-                return self._run(resume, handoff)
+                return self._run(resume, handoff, publish_only)
             except ProfileChanged:
                 resume = True
                 self.update(stage="代理配置已更新，保留候选并重新测量", status="Running")
 
-    def _run(self, resume: bool = False, handoff: bool = False) -> dict:
+    def _run(self, resume: bool = False, handoff: bool = False, publish_only: bool = False) -> dict:
         profile = ProxyProfile.load(self.settings["profile"])
         with RunLock(self.settings["runtime_dir"]):
             recover(self.settings["output_dir"])
             state = self.store.load() if resume else {}
             fresh_handoff = False
-            if state and handoff:
+            if state and handoff and not publish_only:
                 channel = self.settings["root"] / "data/handoff/proxybench-pool.json.gz"
                 handoff_report = json.loads(gzip.decompress(channel.read_bytes()))["report"]
                 fresh_handoff = handoff_report.get("seed") != state.get("sources", {}).get("seed")
@@ -251,6 +256,24 @@ class Pipeline:
                 self.store.partial = {}
             self.control.path.unlink(missing_ok=True)
             self.store.state = state
+            if publish_only:
+                if not state:
+                    saved_path = self.settings["output_dir"] / "nodes.json"
+                    records = json.loads(saved_path.read_text(encoding="utf-8")) if saved_path.exists() else []
+                    if not records:
+                        raise ValueError("没有可手动推送的已测结果，请先开始优选")
+                    state = {"run_id": secrets.token_hex(16), "session_id": secrets.token_hex(16), "cycle": 1,
+                             "pool": [self.candidate(row) for row in records], "results": {f"{row['ip']}:{row['port']}": row for row in records},
+                             "sources": {}, "profile_fingerprint": profile.fingerprint, "measurement_policy": "entry-proxy-v6-trimmed5"}
+                    self.store.state = state
+                elif self.store.partial:
+                    field = {"scan": "results", "general_retest": "general_results", "jp_retest": "jp_results"}.get(state.get("phase"))
+                    if field:
+                        state.setdefault(field, {}).update(self.store.partial)
+                        if field != "results":
+                            self.refresh_retests(field)
+                state.update(phase="general_retest", competition_rules=current_rules(self.settings), general_results={}, jp_results={})
+                self.store.commit()
             try:
                 self.update(stage="检查代理环境与内核更新", status="Running")
                 self.manager.ensure(self.settings["auto_update"])
@@ -289,9 +312,12 @@ class Pipeline:
                         state["phase"] = "general_retest"
                         state["competition_rules"] = current_rules(self.settings)
                         self.store.commit()
-                    qualified = sorted((x for x in state["results"].values() if x.get("qualified")), key=ranking_key)
+                    manual = publish_only or self.control.publication_requested()
+                    qualified = sorted((x for x in state["results"].values() if x.get("qualified") and
+                                        not limit_failure(x, state["competition_rules"])), key=ranking_key)
+                    reserved_jp = {x["ip"] for x in self.unique_ips([x for x in qualified if x.get("jp_qualified")])[:10]}
                     if state["phase"] == "general_retest":
-                        general_pool = self.competition_candidates(qualified[:100], state.get("previous_general", []))
+                        general_pool = self.competition_candidates([x for x in qualified if x["ip"] not in reserved_jp][:100], state.get("previous_general", []))
                         self.scan(general_pool, "general_results", profiles, fixed_rules=state["competition_rules"])
                         self.refresh_retests("general_results")
                         qualified = sorted((x for x in state["results"].values() if x.get("qualified")), key=ranking_key)
@@ -321,7 +347,8 @@ class Pipeline:
                         continue
                     final = [{**item, "lane": "general"} for item in generals] + [{**item, "lane": "jp_append"} for item in japan]
                     qualified = [x for x in state["results"].values() if x.get("qualified")]
-                    report = {**state["sources"], "status": "ok" if len(final) == 110 else "needs_more",
+                    report = {**state["sources"], "status": "ok" if len(final) == 110 else "partial" if manual and final else "needs_more",
+                              "manual_publication": manual,
                               "candidate_total": len(state["pool"]), "tested_count": len(state["results"]),
                               "qualified_count": len(qualified), "jp_qualified_count": sum(x.get("jp_qualified", False) for x in qualified),
                               "mihomo_version": self.manager.version, "batch_total": math.ceil(len(state["pool"]) / 100),
@@ -331,10 +358,11 @@ class Pipeline:
                     result = publish(self.settings["output_dir"], final, report)
                     atomic_write_bytes(self.settings["root"] / "data/handoff/proxybench-attempted.json.gz",
                                        gzip.compress(json.dumps(sorted({x["ip"] for x in state["pool"]})).encode(), mtime=0))
-                    if result["published"] or (self.settings["max_cycles"] and state["cycle"] >= self.settings["max_cycles"]) or handoff:
-                        state["phase"] = "completed" if result["published"] else "needs_more"
+                    if manual or result["published"] or (self.settings["max_cycles"] and state["cycle"] >= self.settings["max_cycles"]) or handoff:
+                        state["phase"] = "scan" if manual and len(state["results"]) < len(state["pool"]) else "completed" if result["published"] else "needs_more"
                         self.store.commit()
-                        self.update(status=state["phase"], stage=state["phase"])
+                        self.update(status="Stopped" if manual else state["phase"], stage="手动复测完成，正在准备推送" if manual else state["phase"],
+                                    publication_phase="publish" if manual else "", candidates=[])
                         return result
                     self.control.checkpoint()
                     fresh, source_report = self.new_pool(profile, False)

@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 import re
 import secrets
 import time
+import zipfile
 
 from core.io_utils import atomic_write_bytes, atomic_write_json
 from scripts.proxybench_channel import pack, validate_result_files
@@ -90,11 +92,26 @@ class DesktopCloudController(CloudController):
         atomic_write_json(self.root / "data/handoff/proxybench-cloud-health.json", payload["report"])
         accumulate(self.settings)
 
-    def local_select(self) -> dict:
+    def local_select(self, *, publish_only: bool = False) -> dict:
         self.update(status="Local", stage="本地真实代理测速", handoff_ready=True, download_ready=True, local_detached=True,
                     run_id=self.run_id or "local-resume", session_id=Store(self.settings["state_dir"]).load().get("session_id", self.live.get("session_id", "")))
         self.settings["workflow_run_id"] = str(self.run_id or "local-resume")
+        if publish_only:
+            return Pipeline(self.settings).run(resume=True, publish_only=True)
         return Pipeline(self.settings).run(resume=True, handoff=True)
+
+    def finish_manual(self, result: dict) -> dict:
+        if result.get("status") == "stopped":
+            self.update(status="Stopped", stage="已停止并保存结果，尚未推送")
+            return result
+        if not result.get("published"):
+            self.update(status="Needs More", stage="现有结果复测后没有合格 IP，已保存断点；可继续测试")
+            self.control.path.with_name("publish-request.json").unlink(missing_ok=True)
+            return result
+        run = self.publish_pending()
+        self.control.path.with_name("publish-request.json").unlink(missing_ok=True)
+        self.update(status="Completed", stage=f"已手动推送常规 {result['general_final_count']} 个＋日本 {result['jp_final_count']} 个 IP")
+        return {**result, "status": "success", "run_url": run["url"], "cloud_confirmed": True}
 
     def upload_pending(self) -> tuple[str, str]:
         pending = self.root / "runtime/pending-publish"
@@ -110,8 +127,6 @@ class DesktopCloudController(CloudController):
             atomic_write_json(manifest, {"sha256": expected})
         if hashlib.sha256(content).hexdigest() != expected:
             raise CloudError("本机待发布结果摘要错误，原文件已保留")
-        import io
-        import zipfile
         with zipfile.ZipFile(io.BytesIO(content)) as package:
             validate_result_files({name: package.read(name) for name in package.namelist()})
         request_path = pending / "public-upload.json"
@@ -123,6 +138,7 @@ class DesktopCloudController(CloudController):
         return result["sha"], expected
 
     def publish_pending(self) -> dict:
+        self.update(status="Publishing", stage="上传已复测结果，等待云端校验与推送确认")
         blob, expected = self.upload_pending()
         self.dispatch_named("proxybench-publish.yml", {"blob_sha": blob, "payload_sha256": expected})
         run = self.watch()
@@ -151,16 +167,20 @@ class DesktopCloudController(CloudController):
             state = Store(self.settings["state_dir"]).load()
             session_path = self.settings["state_dir"] / "session.json"
             session = json.loads(session_path.read_text(encoding="utf-8")) if session_path.exists() else {"session_id": secrets.token_hex(16)}
-            if mode in {"resume", "continue"} and state.get("session_id"):
+            if mode in {"resume", "continue", "publish"} and state.get("session_id"):
                 session["session_id"] = state["session_id"]
             atomic_write_json(session_path, session)
             pending = (self.root / "runtime/pending-publish/manifest.json").exists()
             if pending:
-                health = json.loads((self.settings["output_dir"] / "health.json").read_text(encoding="utf-8"))
+                with zipfile.ZipFile(self.root / "runtime/pending-publish/result.zip") as package:
+                    health = json.loads(package.read("output/health.json"))
                 run = self.publish_pending()
-                if mode == "resume" and health.get("published"):
+                if mode in {"resume", "publish"} and health.get("published"):
+                    self.control.path.with_name("publish-request.json").unlink(missing_ok=True)
                     self.update(status="Completed", stage="已恢复推送并确认发布")
                     return {"status": "success", "published": True, "run_url": run["url"]}
+            if mode == "publish":
+                return self.finish_manual(self.local_select(publish_only=True))
             resumable = mode == "resume" and state.get("phase") in {"scan", "general_retest", "jp_retest", "publish"}
             if mode == "resume" and not state and (self.root / "data/handoff/proxybench-pool.json.gz").exists():
                 import gzip
@@ -174,6 +194,8 @@ class DesktopCloudController(CloudController):
             rounds = 0
             while not limit or rounds < limit:
                 rounds += 1
+                if self.control.publication_requested():
+                    return self.finish_manual(self.local_select(publish_only=True))
                 # Saved handoff and local checkpoints require no live GitHub connection to resume.
                 if not resumable:
                     self.fetch_handoff(session["session_id"], reuse=False)
@@ -182,6 +204,8 @@ class DesktopCloudController(CloudController):
                 if result.get("status") == "stopped":
                     self.update(status="Stopped", stage="本地测速已停止并保存")
                     return result
+                if result.get("manual_publication"):
+                    return self.finish_manual(result)
                 if result.get("published"):
                     run = self.publish_pending()
                     self.update(status="Completed", stage="普通100个和日本10个已复测并推送 GitHub")

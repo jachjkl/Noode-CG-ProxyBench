@@ -38,17 +38,21 @@ def nodes_text(records: list[dict]) -> str:
     return "\n".join(lines) + ("\n" if lines else "")
 
 
-def gate(records: list[dict]) -> bool:
-    return (len(records) == 110 and len({item["ip"] for item in records}) == 110
+def gate(records: list[dict], *, allow_partial: bool = False) -> bool:
+    general = sum(item.get("lane") == "general" for item in records)
+    japan = sum(item.get("lane") == "jp_append" for item in records)
+    counts = 0 < len(records) <= 110 and general <= 100 and japan <= 10 if allow_partial else general == 100 and japan == 10
+    return (counts and len(records) == general + japan and len({item["ip"] for item in records}) == len(records)
             and all(item.get("qualified") for item in records)
-            and [item.get("lane") for item in records] == ["general"] * 100 + ["jp_append"] * 10
-            and all(item.get("geo_country") == "JP" and item.get("geo_verified") and not item.get("geo_conflict") for item in records[100:]))
+            and [item.get("lane") for item in records] == ["general"] * general + ["jp_append"] * japan
+            and all(item.get("geo_country") == "JP" and item.get("geo_verified") and not item.get("geo_conflict") for item in records[general:]))
 
 
 def publish(root: Path, records: list[dict], health: dict) -> dict:
     root.mkdir(parents=True, exist_ok=True)
-    passed = gate(records)
+    passed = gate(records, allow_partial=health.get("manual_publication") is True)
     report = {**health, "publish_gate_passed": passed, "published": passed, "needs_more": not passed,
+              "quota_complete": gate(records),
               "general_final_count": sum(item.get("lane") == "general" for item in records),
               "jp_final_count": sum(item.get("lane") == "jp_append" for item in records),
               "unique_final_count": len({item["ip"] for item in records})}
@@ -62,7 +66,7 @@ def publish(root: Path, records: list[dict], health: dict) -> dict:
     staged = Path(tempfile.mkdtemp(prefix=".proxybench-publish-", dir=root))
     try:
         atomic_write_json(staged / "nodes.json", public)
-        atomic_write_json(staged / "api.json", {"project": "Noode-CG-ProxyBench", "count": 110, "nodes": public})
+        atomic_write_json(staged / "api.json", {"project": "Noode-CG-ProxyBench", "count": len(public), "nodes": public})
         atomic_write_text(staged / "nodes.txt", nodes_text(public))
         stream = io.StringIO()
         columns = list(public[0]) + sorted({key for item in public for key in item} - set(public[0]))

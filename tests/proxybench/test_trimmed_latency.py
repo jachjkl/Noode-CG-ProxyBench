@@ -62,7 +62,7 @@ class TrimmedLatencyTests(unittest.TestCase):
             manager = FakeManager()
             values = iter([1, 1, 1, 230, 230, 230, 240, 240, 240, 250, 250, 250, 1000, 1000, 1000])
             manager.controller.delay = lambda *_: {"success": True, "latency_ms": next(values)}
-            record = Benchmark(manager, {**RULES, "round_cooldown_seconds": 0, "delay_concurrency": 1},
+            record = Benchmark(manager, {**RULES, "max_proxy_average_latency_ms": 200, "round_cooldown_seconds": 0, "delay_concurrency": 1},
                                Control(Path(directory)), geo_urls=[]).batch(pool(1), object())[0]
         self.assertEqual(record["proxy_average_latency_ms"], 240)
         self.assertFalse(record["qualified"])

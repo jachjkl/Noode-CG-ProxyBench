@@ -27,11 +27,19 @@ def read_published(client) -> dict:
     cached = client.settings["state_dir"] / "cloud-published-nodes.json"
     download(cached, expected, sources(REPOSITORY, ref, "output/nodes.json"), timeout=6, emit=lambda _: None, checkpoint=client.control.checkpoint)
     nodes = json.loads(cached.read_bytes())
-    if not isinstance(nodes, list) or not gate(nodes):
-        raise CloudError("云端结果未满足普通100个和日本10个，不能当作已发布合格名单")
+    if not isinstance(nodes, list):
+        raise CloudError("云端结果格式错误")
+    partial = not gate(nodes)
+    if partial:
+        health_meta = client.command(["api", f"repos/{REPOSITORY}/contents/output/health.json?ref={ref}"], as_json=True)
+        health = json.loads(base64.b64decode("".join(health_meta["content"].split()), validate=True))
+        if health.get("manual_publication") is not True or not health.get("published") or not gate(nodes, allow_partial=True):
+            raise CloudError("云端结果不满足自动发布门槛，也不是已确认的手动发布名单")
     # The JSON array order is the published order. Never sort historical nodes by fresh local values.
-    return {"status": "Ready", "nodes": nodes, "total": len(nodes), "general": 100, "japan": 10,
-            "ref": ref, "synced_at": datetime.now(UTC).isoformat(), "message": "已读取云端原始发布顺序"}
+    return {"status": "Ready", "nodes": nodes, "total": len(nodes),
+            "general": sum(row["lane"] == "general" for row in nodes), "japan": sum(row["lane"] == "jp_append" for row in nodes),
+            "ref": ref, "synced_at": datetime.now(UTC).isoformat(),
+            "message": "已读取手动推送的实际名单，保持原始顺序" if partial else "已读取云端原始发布顺序"}
 
 
 def refresh(client) -> dict:

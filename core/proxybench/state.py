@@ -100,6 +100,10 @@ class Control:
         self.update = update or (lambda **_: None)
         self.announced_status = None
 
+    def publication_requested(self) -> bool:
+        request = self.path.with_name("publish-request.json")
+        return request.exists() and json.loads(request.read_text(encoding="utf-8")).get("requested") is True
+
     def announce(self, status: str) -> None:
         if status != self.announced_status:
             self.announced_status = status

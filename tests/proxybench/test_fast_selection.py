@@ -68,7 +68,7 @@ class FastSelectionTests(unittest.TestCase):
             root = Path(directory)
             manager = FakeManager()
             manager.health = lambda: {"status": "Stopped"}
-            settings = {"state_dir": root, "rules_path": root / "rules.json", "rules": RULES, "fast_entry_screen": True}
+            settings = {"state_dir": root, "rules_path": root / "rules.json", "rules": {**RULES, "max_entry_latency_ms": 200}, "fast_entry_screen": True}
             pipeline = Pipeline(settings, manager=manager)
             pipeline.store.state = {"run_id": "resume", "phase": "scan", "pool": pool(4), "results": {}}
             completed = {**pool(1)[0], "key": "104.16.0.1:443", "qualified": True}

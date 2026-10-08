@@ -31,7 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--no-browser", action="store_true")
     dashboard.add_argument("--auto-start", action="store_true")
     automatic = subparsers.add_parser("auto-cloud", help="自动匹配代理、启动独立执行器、云端发现、本地实测和云端发布")
-    automatic.add_argument("--mode", choices=["auto", "resume", "continue"], default="auto")
+    automatic.add_argument("--mode", choices=["auto", "resume", "continue", "publish"], default="auto")
     server = subparsers.add_parser("serve", help="启动只读 HTTP API")
     server.add_argument("--host", default="127.0.0.1")
     server.add_argument("--port", type=int, default=8080)

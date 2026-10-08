@@ -6,9 +6,9 @@ from pathlib import Path
 
 import yaml
 
-RULES = {"batch_size": 100, "round_count": 5, "max_proxy_average_latency_ms": 200.0,
-         "max_entry_latency_ms": 200.0, "entry_timeout_seconds": 1.2, "entry_concurrency": 256,
-         "max_proxy_loss_percent": 0.0, "min_proxy_speed_mbps": 3.0, "download_attempts": 1,
+RULES = {"batch_size": 100, "round_count": 5, "max_proxy_average_latency_ms": 300.0,
+         "max_entry_latency_ms": 300.0, "entry_timeout_seconds": 1.2, "entry_concurrency": 256,
+         "max_proxy_loss_percent": 0.0, "min_proxy_speed_mbps": 3.01, "download_attempts": 1,
          "download_bytes": 524288, "minimum_completion_ratio": 0.95, "maximum_download_seconds": 7.0,
          "request_timeout_seconds": 3.0,
          "download_timeout_seconds": 8.0, "delay_concurrency": 60, "speed_concurrency": 4,

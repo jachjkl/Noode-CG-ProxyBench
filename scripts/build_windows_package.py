@@ -81,13 +81,17 @@ shell.Run command, 0, False
     (distribution / "开始自动优选.vbs").write_text(vbs, encoding="utf-16")
     (distribution / "Start-ProxyBench.vbs").write_text(vbs, encoding="utf-16")
     (distribution / "开始自动优选.cmd").write_text('@echo off\r\nstart "" wscript.exe "%~dp0Start-ProxyBench.vbs"\r\n', encoding="ascii")
-    instructions = "EXE将运行目录放在自身旁边；ZIP解压到任意本地目录，双击【开始自动优选.vbs】，在窗口点击【开始优选】。\n已内置 Mihomo、Python、GitHub CLI，无需手工安装内核。\n自动匹配代理、启动本机执行器，GitHub 云端获取 IP，本地三网站三轮与旧安装包的小样本网速测试，最终交回云端发布。\n网速沿用旧包参数：一次512 KiB样本、95%正文完整度、默认3 Mbps；入口200毫秒仅用于优先排序，不淘汰可连通的稍慢IP；三站统一延迟平均2500毫秒，先初筛再复测；没有另加带宽验收关卡。\n两个固定来源每次打开只全量获取一次；后续只补新的10000个边缘IP，整次会话候选不重复。发布前新候选与上次普通100个IP重新实测竞争、日本10个最后追加；不足就继续补测，直到补齐或停止。\n每页显示300个IP，详细测量点击查看。首次运行下载本机执行器。GitHub使用本机jachjkl的登录授权。正常关闭清理候选缓存与断点；异常中断、报错或主动停止保存可恢复。左右两个窗口独立分页并实时显示测量。每次运行检查代理与内核更新；不足100个普通IP和10个日本IP不覆盖成功结果。\n"
-    instructions += "此专用包已内置本机真实代理配置；请仅在自己的电脑使用和保存。\n" if personal else "此公开包不含个人代理配置；可自动读取本机配置。\n"
-    instructions = instructions.replace("自动匹配代理、启动本机执行器", "自动匹配代理并检测已有 VPN 环境")
-    instructions = instructions.replace("首次运行下载本机执行器。", "多镜像下载候选；本地测速独立运行，不依赖 GitHub 执行器心跳。")
-    instructions = instructions.replace("本地三网站三轮", "本地每站至少五次连接")
-    instructions = instructions.replace("入口200毫秒仅用于优先排序，不淘汰可连通的稍慢IP；三站统一延迟平均2500毫秒", "入口严格按保存上限筛选；每站至少测五次，分别去掉最高最低，再将三个网站的平均值合并，默认综合上限200毫秒")
-    instructions += "规则逐项提供中文说明，保存后再次打开仍使用。云端已发布名单单独显示数量和原始排名；普通取前100，日本另取前10，均按同一规则复测后推送。完成步骤沿用原包底部荧光与上升粒子，去掉扫光。\n"
+    instructions = """EXE 将软件目录解压到自身旁边；ZIP 可解压到任意本地目录，双击【开始自动优选.vbs】。不会固定解压到桌面。
+已内置 Mihomo、Python、GitHub CLI。点击【开始优选】，自动读取代理、检查内核更新，云端获取 IP，通过多镜像下载后在本机独立测速。
+默认规则采用当前保存的设置：入口上限 300 毫秒，三站平均上限 300 毫秒，每站 5 次，去掉一次最高和最低后取中间三次平均，三站均值再平均。请求失败率 0%，网速至少 3.01 Mbps。
+网速沿用原安装包：一次 512 KiB 样本，至少 95% 正文完成，I/O 超时 8 秒，正文计时上限 7 秒。所有规则均有中文解释，保存后再次打开继续使用。
+两个固定来源每次打开只获取一次全量 IP；自动补充和继续获取均获取 10000 个本窗口未获取过的边缘 IP。
+【停止并保存】只停止并保留已测结果与断点，不自动推送。【手动推送】复测已有结果并按实际合格数量推送，不获取新 IP；运行中点击会在当前批次完成后执行。最多 100 个常规 IP 和 10 个追加日本 IP，质量规则不放宽。自动优选仍补足 100＋10 后发布。
+运行计时器显示优选累计时间和软件打开时长；暂停不计入优选时间，恢复时继续计时，重新开始会清零。推送失败保留待发布包，手动推送可重传。
+左右列表独立分页，每页 300 个 IP，云端结果显示实际数量和原推送排名。步骤完成保留底部荧光与上升粒子效果。
+正常关闭清除候选缓存；异常中断、报错或主动停止保存保留断点。真实代理参数只保存在本机。
+"""
+    instructions += "这是含本机代理配置的专用包，请仅保存在自己的电脑。\n" if personal else "公开包不含个人代理配置，可自动读取本机配置。\n"
     (distribution / "运行说明.txt").write_text(instructions, encoding="utf-8")
     archive_path = ROOT / "dist" / f"Noode-CG-ProxyBench-{'专用版' if personal else 'Windows'}-{VERSION}.zip"
     with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:

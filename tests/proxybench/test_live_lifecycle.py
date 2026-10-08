@@ -188,4 +188,4 @@ class LiveLifecycleTests(unittest.TestCase):
             pipeline._run = Mock(side_effect=[ProfileChanged(), {"status": "resumed"}])
             with patch("core.proxybench.pipeline.refresh_existing", return_value={"changed": False}):
                 self.assertEqual(pipeline.run()["status"], "resumed")
-            self.assertEqual([call.args for call in pipeline._run.call_args_list], [(False, False), (True, False)])
+            self.assertEqual([call.args for call in pipeline._run.call_args_list], [(False, False, False), (True, False, False)])

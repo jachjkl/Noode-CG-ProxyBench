@@ -32,7 +32,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: main
-      - name: Download public result blob and validate exact 100+10 output
+      - name: Validate automatic 100+10 output or explicit manual selection
         run: |
           python -c "import os,re;assert re.fullmatch('[a-f0-9]{40}',os.environ['RESULT_BLOB']);assert re.fullmatch('[a-f0-9]{64}',os.environ['RESULT_SHA256'])"
           gh api "repos/$GITHUB_REPOSITORY/git/blobs/$RESULT_BLOB" > "$RUNNER_TEMP/result-blob.json"
