@@ -33,6 +33,12 @@ class BenchDashboard:
         self.cloud_refresh_thread = None
         self.cloud_published = {"status": "Checking", "nodes": [], "total": 0, "general": 0, "japan": 0, "message": "正在读取 GitHub 已发布 IP"}
         prior = self.read_cached(self.settings["state_dir"] / "live.json", default={})
+        prior_cloud = self.read_cached(self.settings["state_dir"] / "cloud-live.json", default={})
+        if prior_cloud.get("status") == "Failed" and any(job.get("conclusion") == "cancelled" for job in prior_cloud.get("jobs", [])) and not owned_core_running(self.settings["runtime_dir"]):
+            message = "上次云端执行器任务中断，断点已保留；可点击继续测试，按当前规则独立复测"
+            prior = {**prior, "status": "Stopped", "stage": message, "speed_active": []}
+            atomic_write_json(self.settings["state_dir"] / "live.json", prior)
+            atomic_write_json(self.settings["state_dir"] / "cloud-live.json", {**prior_cloud, "status": "Stopped", "interrupted": True, "stage": message})
         if (self.settings["state_dir"] / "batch-state.json").exists() and prior.get("status") in {"Running", "Paused", "Stopped", "Failed"}:
             self.preserve_on_close = True
         atomic_write_json(self.settings["state_dir"] / "session.json", {"session_id": secrets.token_hex(16)})

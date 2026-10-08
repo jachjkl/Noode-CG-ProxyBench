@@ -127,6 +127,19 @@ class LiveLifecycleTests(unittest.TestCase):
             self.assertFalse(controller.finish_close(normal=True))
             self.assertTrue(saved.exists())
 
+    def test_opening_old_cancelled_workflow_clears_stale_running_without_erasing_progress(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write(root / "data/proxy-bench/batch-state.json", {"saved": True})
+            self.write(root / "data/proxy-bench/live.json", {"status": "Running", "qualified_count": 111})
+            self.write(root / "data/proxy-bench/cloud-live.json", {"status": "Failed", "jobs": [{"conclusion": "cancelled"}]})
+            controller = self.dashboard(root)
+            live = controller.read_cached(root / "data/proxy-bench/live.json")
+            self.assertEqual(live["status"], "Stopped")
+            self.assertEqual(live["qualified_count"], 111)
+            self.assertTrue((root / "data/proxy-bench/batch-state.json").exists())
+            self.assertTrue(controller.preserve_on_close)
+
     def test_auto_profile_refresh_syncs_changed_authentication_without_reporting_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
