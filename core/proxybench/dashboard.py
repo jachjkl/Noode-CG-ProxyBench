@@ -241,7 +241,7 @@ class BenchDashboard:
             if action in {"start", "resume", "continue-fetch", "validate", "auto-start"}:
                 if running:
                     raise ValueError("已有任务正在运行")
-                if action in {"start", "auto-start"}:
+                if action in {"start", "auto-start", "resume", "continue-fetch"}:
                     self.preserve_on_close = False
                 if action != "auto-start":
                     ProxyProfile.load(settings["profile"])
