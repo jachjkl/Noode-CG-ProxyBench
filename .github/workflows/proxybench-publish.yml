@@ -1,0 +1,57 @@
+name: 校验并发布本地优选结果
+run-name: 发布本地优选 ${{ inputs.dispatch_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      dispatch_id:
+        type: string
+        required: true
+      blob_sha:
+        type: string
+        required: true
+      payload_sha256:
+        type: string
+        required: true
+permissions: {}
+concurrency:
+  group: noode-cg-proxybench
+  cancel-in-progress: false
+jobs:
+  cloud-publish:
+    name: 云端发布最优IP
+    if: github.repository == 'jachjkl/Noode-CG-ProxyBench' && github.actor == 'jachjkl'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RESULT_BLOB: ${{ inputs.blob_sha }}
+      RESULT_SHA256: ${{ inputs.payload_sha256 }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: main
+      - name: Download public result blob and validate exact 100+10 output
+        run: |
+          python -c "import os,re;assert re.fullmatch('[a-f0-9]{40}',os.environ['RESULT_BLOB']);assert re.fullmatch('[a-f0-9]{64}',os.environ['RESULT_SHA256'])"
+          gh api "repos/$GITHUB_REPOSITORY/git/blobs/$RESULT_BLOB" > "$RUNNER_TEMP/result-blob.json"
+          python - <<'PY'
+          import base64, json, os
+          from pathlib import Path
+          from scripts.proxybench_channel import unpack
+          payload = json.loads((Path(os.environ['RUNNER_TEMP']) / 'result-blob.json').read_text())
+          assert payload['encoding'] == 'base64'
+          content = base64.b64decode(''.join(payload['content'].split()), validate=True)
+          unpack(content, os.environ['RESULT_SHA256'], Path.cwd(), 'result')
+          PY
+      - name: Publish allowlisted output and session IP history
+        run: |
+          test "$GITHUB_REPOSITORY" = "jachjkl/Noode-CG-ProxyBench"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- output data/handoff/proxybench-attempted.json.gz
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(data): verified desktop proxy results [skip ci]"
+            git push origin HEAD:main
+          fi

@@ -5,7 +5,8 @@ The cloud and Windows roles share one codebase and version. The combined mainten
 ```text
 Noode-CG-ProxyBench/
   .github/workflows/
-    proxybench.yml               Cloud discovery, local runner, cloud publication
+    proxybench.yml               Cloud discovery and trusted mirror metadata
+    proxybench-publish.yml       Validate public result blob and publish on Ubuntu
     ci.yml                       Windows and Ubuntu checks
   core/proxybench/
     __init__.py                  Common VERSION
@@ -13,7 +14,9 @@ Noode-CG-ProxyBench/
     controller.py                Explicit proxy transport and routing evidence
     pipeline.py                  Ranking, retesting, replenishment
     export.py                    output/nodes.txt and other result files
-    cloud.py                     Owner-controlled automation and runner lifecycle
+    desktop_cloud.py             Cloud control around locally owned measurements
+    cloud_network.py             Read-only VPN detection and cloud process environment
+    cloud.py                     Shared commands and optional legacy runner lifecycle
   sources/                       Candidate feeds and official edge sampling
   windows-controller/dashboard/
     proxybench.html              Chinese application page

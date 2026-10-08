@@ -12,14 +12,14 @@ The application automatically connects these stages:
 
 1. Request a GitHub Actions run using the owner's local GitHub login.
 2. Fetch both configured feeds in full and sample 10,000 additional official Cloudflare IPv4 candidates.
-3. Download the immutable handoff through verified mirrors or the authenticated runner channel.
+3. Download the immutable handoff through multiple public mirrors and verify its trusted SHA-256.
 4. Measure candidate-specific proxy access, response times, request success, and the original package's small-sample network speed on Windows.
 5. Retest current candidates against the previously published ordinary TOP100, select the best 100, and append 10 independently verified Japanese exits.
 6. Upload the allowlisted results to Ubuntu for final validation and publication.
 
 [Open the cloud automation workflow](https://github.com/jachjkl/Noode-CG-ProxyBench/actions/workflows/proxybench.yml). A manual run from GitHub defaults to cloud discovery only. Starting optimization in the Windows application explicitly requests the complete local benchmark and publication workflow.
 
-The first launch downloads and registers a separate application-owned Windows runner. GitHub authentication comes from the owner's local `jachjkl` login. The public package contains no personal proxy credentials. The separately prepared owner-only package includes the real local profile at the owner's request and is never uploaded to GitHub Releases.
+The desktop controller runs local measurements independently of GitHub Actions. Cloud discovery and final publication run on Ubuntu; no Windows Runner heartbeat owns the local benchmark. GitHub authentication comes from the owner's local `jachjkl` login. Public files use mirror downloads; authenticated operations use official GitHub endpoints with bounded retries and do not automatically adopt the local HTTP proxy. Each start checks for a running proxy client and a reachable local proxy listener, while preserving the current VPN and system routes. The public package contains no personal proxy credentials. The separately prepared owner-only package includes the real local profile at the owner's request and is never uploaded to GitHub Releases.
 
 The compact Chinese dashboard shows five actual workflow steps: cloud acquisition, candidate download, local selection, final retest, and GitHub publication. Completed steps use a fluorescent-yellow gradient, a silver-white light sweep, and rising particles; current, paused, failed, and insufficient-result states remain explicit. The publication step completes only after cloud push succeeds. The candidate list and live benchmark occupy separate panes, each with independent 300-IP paging. The live pane includes in-flight requests and partial batch results, with detailed observations in a dialog. Work starts after the user clicks the primary start button.
 
@@ -76,7 +76,7 @@ python scripts/build_windows_package.py
 python scripts/build_windows_installer.py
 ```
 
-Cloud preparation uses `prepare-handoff`; downloaded pools are persisted with `stage-handoff`; the runner executes `local-select`. CI uses deterministic fixtures and does not substitute mocked measurements for real network acceptance.
+Cloud preparation uses `prepare-handoff`; downloaded pools are persisted with `stage-handoff`; the desktop controller executes the local pipeline. The publication workflow validates an allowlisted, SHA-256-verified public result blob before committing output. CI uses deterministic fixtures and does not substitute mocked measurements for real network acceptance.
 
 Baseline: `jachjkl/Noode-CG` main commit `3bc8598b1b9e77cc38f7a54c9d75f5e3796fc058`. Recovery tag: `baseline-noode-cg-v13.6.2`. This project writes only to the independent `Noode-CG-ProxyBench` repository. The original repository's source and published outputs remain unchanged.
 

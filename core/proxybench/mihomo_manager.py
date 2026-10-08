@@ -43,14 +43,25 @@ def owned_core_running(root: Path) -> bool:
         return False
 
 
-def download(url: str, limit: int = 80 * 1024 * 1024) -> bytes:
+def download(url: str, limit: int = 80 * 1024 * 1024, *, timeout: float = 12) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": "Noode-CG-ProxyBench/1.0"})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with opener.open(request, timeout=45) as response:
+    with opener.open(request, timeout=timeout) as response:
         data = response.read(limit + 1)
     if len(data) > limit:
         raise CoreError("Mihomo 下载超过上限")
     return data
+
+
+def release_download(url: str, expected: str) -> bytes:
+    for address in [f"https://ghfast.top/{url}", f"https://gh.ddlc.top/{url}", f"https://gh-proxy.com/{url}", url]:
+        try:
+            content = download(address, timeout=10)
+            if hashlib.sha256(content).hexdigest() == expected:
+                return content
+        except (OSError, ValueError):
+            continue
+    raise CoreError("全部内核镜像下载失败或摘要不匹配")
 
 
 class MihomoManager:
@@ -122,8 +133,8 @@ class MihomoManager:
                 archive = cached.read_bytes()
             else:
                 try:
-                    archive = download(asset["browser_download_url"])
-                except OSError:
+                    archive = release_download(asset["browser_download_url"], digest[7:])
+                except (OSError, CoreError):
                     gh = shutil.which("gh")
                     if not gh:
                         raise

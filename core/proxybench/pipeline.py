@@ -86,7 +86,7 @@ class Pipeline:
         state = self.store.state
         self.status.update(candidate_total=len(state.get("pool", [])), tested_count=len(state.get("results", {})),
                            run_id=state.get("run_id"), session_id=state.get("session_id"),
-                           workflow_run_id=os.environ.get("GITHUB_RUN_ID", ""),
+                           workflow_run_id=self.settings.get("workflow_run_id", os.environ.get("GITHUB_RUN_ID", "")),
                            qualified_count=sum(x.get("qualified", False) for x in state.get("results", {}).values()),
                            phase=state.get("phase", ""), cycle=state.get("cycle", 1), sources=state.get("sources", {}),
                            entry_screened_count=len(state.get("entry_results", {})),

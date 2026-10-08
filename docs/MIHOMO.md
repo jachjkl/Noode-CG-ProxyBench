@@ -1,6 +1,6 @@
 # Mihomo lifecycle
 
-The manager uses official stable release assets and verifies the published SHA-256. On Windows AMD64 it selects the compatible build. Core upgrades are forbidden during an active benchmark. Updates use temporary downloads, an old-binary backup, atomic replacement, startup health checks, and rollback on failure.
+The manager reads official stable release metadata and verifies its published SHA-256 against downloads from several public mirrors, with the official asset as a fallback. Each mirror attempt has a bounded timeout. On Windows AMD64 it selects the compatible build. Core upgrades are forbidden during an active benchmark. Updates use temporary downloads, an old-binary backup, atomic replacement, startup health checks, and rollback on failure.
 
 Each owned session has a random controller secret and dynamic loopback ports. LAN access and TUN are disabled; rule mode is mandatory. The named inbound rule and exact benchmark-group membership are verified. Delay API calls specify their candidate outbound directly. Unified delay is enabled, matching the owner's active Clash configuration; the reported response excludes handshake differences while still requiring a successful authenticated connection.
 

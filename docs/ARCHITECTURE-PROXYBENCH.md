@@ -1,6 +1,6 @@
 # Architecture
 
-The Windows application registers an independent owner-authenticated runner and dispatches the workflow in this repository. Ubuntu discovers candidates and publishes an immutable handoff commit. Windows verifies the expected SHA-256 after mirror download, with the authenticated runner control channel available as a final fallback.
+The Windows application dispatches cloud discovery through the owner's local GitHub login. Ubuntu discovers candidates and publishes an immutable handoff commit. A small trusted Actions artifact identifies the exact commit, session, and SHA-256; Windows downloads the candidate pool through public mirrors and verifies that digest. Neither authentication tokens nor private protocol parameters are sent to mirrors.
 
 The first handoff includes both complete feeds and 10,000 official edge candidates. Cloud session history stores all assigned IPs. Later rounds sample fresh edge IPs without refetching either feed. Windows accumulates downloaded pools before runtime validation, preserving untested first-round candidates across failed validation and replenishment.
 
@@ -8,6 +8,6 @@ Each candidate uses an immutable authenticated profile with only `server` and th
 
 Batch state is committed through digest-verified snapshots. The current ordinary shortlist and all old ordinary TOP100 nodes receive competition retests; failed retests replace stale passes. Japanese candidates are separately retested until ten eligible exits remain outside the ordinary selection. Exactly 100+10 unique nodes are required.
 
-Windows sends an allowlisted result archive and digest to Ubuntu, which independently validates the publication gate and commits only public output files. A matching acknowledgement clears the exact pending payload while preserving checkpoints. The controller keeps its own runner alive through replenishment and removes its registration when the operation ends.
+Windows owns the local pipeline directly, so loss of a GitHub connection cannot cancel an active measurement through Runner heartbeat failure. Explicit resume begins saved local work without requesting GitHub. After measurement, Windows stores a durable allowlisted result archive and creates a public, content-addressed Git blob through the official authenticated API. The Ubuntu publication workflow receives only the blob identifier and expected SHA-256, validates every archive member and the publication gate, and commits only public outputs and attempted-IP history. Confirmation of that exact workflow clears the pending archive. Failed upload or publication retains the complete archive for retry. The normal desktop workflow requires no self-hosted Windows Runner.
 
 Each window gets a new session. The primary start action uses that window's identity; explicit resume restores a saved session. Default replenishment continues until the final gate passes, the user stops, or the candidate space is exhausted. The original repository, its runners, the system proxy, and other application cores are outside this component's ownership.

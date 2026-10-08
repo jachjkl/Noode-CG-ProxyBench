@@ -26,19 +26,24 @@ def progress(live: dict, cloud: dict, health: dict) -> list[dict]:
                          and live.get("workflow_run_id") and live.get("workflow_run_id") != cloud.get("local_before_dispatch"))
     current = (str(live.get("workflow_run_id", "")) == str(cloud_run)) if cloud_run else (
         not cloud or new_local_session or local_active and bool(live.get("workflow_run_id")))
+    if cloud.get("local_detached") and live.get("session_id") and live.get("session_id") == cloud.get("session_id"):
+        current = True
     active = None
     if cloud.get("mode") == "validate":
         rows[0]["detail"] = "独立检查代理内核，未启动优选"
         return rows
-    if prepare.get("conclusion") == "success" or current and phase in {"scan", "general_retest", "jp_retest", "publish", "completed", "needs_more"}:
+    if cloud.get("handoff_ready") or prepare.get("conclusion") == "success" or current and phase in {"scan", "general_retest", "jp_retest", "publish", "completed", "needs_more"}:
         mark(0, "completed", "候选已在云端生成")
     elif prepare.get("status") == "in_progress" or cloud.get("status") in {"Preparing", "Dispatching", "queued", "in_progress"}:
         mark(0, "running", "正在准备或获取候选")
         active = 0
-    if download.get("conclusion") == "success" or current and phase in {"scan", "general_retest", "jp_retest", "publish", "completed", "needs_more"}:
+    if cloud.get("download_ready") or download.get("conclusion") == "success" or current and phase in {"scan", "general_retest", "jp_retest", "publish", "completed", "needs_more"}:
         mark(1, "completed", "候选已下载并保存到本机")
     elif local.get("status") == "in_progress" and rows[0]["status"] == "completed":
         mark(1, "running", "正在下载并校验候选")
+        active = 1
+    elif cloud.get("status") == "Downloading":
+        mark(1, "running", "多镜像下载并校验候选")
         active = 1
     if current and phase == "scan":
         mark(2, "running", f"已处理 {live.get('tested_count', 0)} / {live.get('candidate_total', 0)} 个 IP")

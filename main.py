@@ -68,8 +68,8 @@ def main(argv: list[str] | None = None) -> int:
             from dashboard_server import serve as serve_dashboard
             return serve_dashboard(settings["root"], "127.0.0.1", args.port, "jachjkl/Noode-CG-ProxyBench", "main", args.auto_start, not args.no_browser)
         if command == "auto-cloud":
-            from core.proxybench.cloud import CloudController
-            report = CloudController(settings).run(args.mode)
+            from core.proxybench.desktop_cloud import DesktopCloudController
+            report = DesktopCloudController(settings).run(args.mode)
         elif command == "stage-handoff":
             from core.proxybench.queue import accumulate
             report = accumulate(settings)

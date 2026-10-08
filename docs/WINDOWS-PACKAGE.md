@@ -6,7 +6,7 @@ The package contains embedded Python, PyYAML, psutil, GitHub CLI, Mihomo, and Wi
 
 Reinstallation preserves existing local profiles and state. Active cloud or core locks prevent replacement during a benchmark. Identical existing files are skipped, reducing replacement conflicts with loaded runtime files. The installer uses explicit UTF-8 compilation and validates archive paths.
 
-The application uses the owner's local GitHub login and creates a separate repository-scoped runner. Its directory and registration are not bundled. The first operation downloads the official runner, verifies its digest, and configures it without logging registration tokens. The owned runner survives all replenishment rounds and its registration is cleaned up afterward.
+The application uses the owner's local GitHub login. Discovery and publication run on Ubuntu, while the local benchmark runs directly under the desktop controller. A self-hosted Windows Runner is no longer required for normal use. Candidate and core assets use digest-checked public mirrors; authenticated GitHub operations use official endpoints. Local HTTP proxy variables are not automatically adopted for cloud control. Existing VPN routes and proxy clients are inspected without being changed.
 
 The interface is Chinese, with 300 IPs per page and an on-demand detail dialog. Initial discovery fetches both full feeds plus 10,000 official candidates. Subsequent discovery requests fresh 10,000-address edge samples only. Final retests compete with the previous ordinary TOP100 and append verified Japanese exits. Insufficient results continue replenishment; pause and stop preserve progress.
 

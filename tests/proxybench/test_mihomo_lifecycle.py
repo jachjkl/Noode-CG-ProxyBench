@@ -16,6 +16,14 @@ from core.proxybench.mihomo_manager import MihomoManager
 
 
 class MihomoLifecycleTests(unittest.TestCase):
+    def test_release_mirror_digest_failure_falls_back_to_valid_mirror(self):
+        from core.proxybench.mihomo_manager import release_download
+        expected = hashlib.sha256(b"valid core").hexdigest()
+        with patch("core.proxybench.mihomo_manager.download", side_effect=[b"wrong core", OSError(), b"valid core"]) as fetch:
+            self.assertEqual(release_download("https://github.com/example/core.zip", expected), b"valid core")
+        self.assertEqual(fetch.call_count, 3)
+        self.assertTrue(fetch.call_args_list[0].args[0].startswith("https://ghfast.top/"))
+
     def test_update_is_forbidden_while_benchmark_active(self):
         with tempfile.TemporaryDirectory() as directory:
             manager = MihomoManager(Path(directory))

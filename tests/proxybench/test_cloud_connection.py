@@ -7,28 +7,28 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from core.proxybench.cloud import CloudController
-from core.proxybench.cloud_network import cloud_environment
+from core.proxybench.cloud_network import cloud_environment, vpn_environment
 from core.proxybench.state import Store
 from core.proxybench.workflow import progress
 from tests.proxybench import test_session_cloud
 
 
 class CloudConnectionTests(unittest.TestCase):
-    def test_existing_windows_proxy_is_passed_to_runner_without_mutating_environment(self):
-        original = {"PATH": "original", "NO_PROXY": "example.test"}
+    def test_cloud_control_does_not_adopt_local_proxy_or_mutate_environment(self):
+        original = {"PATH": "original", "NO_PROXY": "example.test", "HTTPS_PROXY": "http://127.0.0.1:7890"}
         with patch("core.proxybench.cloud_network.windows_proxy", return_value="http://127.0.0.1:7890"), \
                 patch("core.proxybench.cloud_network.socket.create_connection"):
             env = cloud_environment(original)
-        self.assertEqual(original, {"PATH": "original", "NO_PROXY": "example.test"})
-        self.assertEqual(env["https_proxy"], "http://127.0.0.1:7890")
-        self.assertEqual(env["HTTPS_PROXY"], env["https_proxy"])
+        self.assertEqual(original["HTTPS_PROXY"], "http://127.0.0.1:7890")
+        self.assertNotIn("https_proxy", env)
+        self.assertNotIn("HTTPS_PROXY", env)
         self.assertEqual(env["no_proxy"], "example.test,localhost,127.0.0.1,::1")
 
-    def test_explicit_proxy_is_kept_and_dead_or_nonlocal_automatic_proxy_is_not_used(self):
+    def test_cloud_control_never_automatically_reads_windows_proxy(self):
         with patch("core.proxybench.cloud_network.windows_proxy") as windows:
             env = cloud_environment({"HTTPS_PROXY": "http://owner.example:8080"})
         windows.assert_not_called()
-        self.assertEqual(env["https_proxy"], "http://owner.example:8080")
+        self.assertNotIn("https_proxy", env)
         for proxy in ("http://127.0.0.1:7890", "http://remote.example:7890", "socks5://127.0.0.1:7890"):
             with self.subTest(proxy=proxy), patch("core.proxybench.cloud_network.windows_proxy", return_value=proxy), \
                     patch("core.proxybench.cloud_network.socket.create_connection", side_effect=OSError):
@@ -49,6 +49,17 @@ class CloudConnectionTests(unittest.TestCase):
             with log.open("a", encoding="utf-8") as handle:
                 handle.write("Job cancellation request received\n")
             self.assertFalse(controller.runner_lost_connection())
+
+    def test_vpn_detection_is_read_only_and_does_not_claim_tunnel_verification(self):
+        with patch("core.proxybench.cloud_network.windows_proxy", return_value="http://127.0.0.1:7890"), \
+                patch("core.proxybench.cloud_network.socket.create_connection"), \
+                patch("psutil.process_iter", return_value=[Mock(info={"name": "mihomo.exe"})]):
+            report = vpn_environment()
+        self.assertTrue(report["client_detected"])
+        self.assertTrue(report["local_proxy_reachable"])
+        self.assertFalse(report["system_route_changed"])
+        self.assertFalse(report["cloud_uses_local_http_proxy"])
+        self.assertNotIn("tunnel_verified", report)
 
     def controller(self, root):
         settings = test_session_cloud.SessionCloudTests().settings(root)

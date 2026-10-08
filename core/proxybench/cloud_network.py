@@ -1,4 +1,4 @@
-"""Use the owner's existing HTTP proxy for cloud control, without changing Windows."""
+"""Keep authenticated cloud control on official endpoints and inspect VPN state read-only."""
 from __future__ import annotations
 
 import os
@@ -24,23 +24,31 @@ def windows_proxy() -> str:
 
 
 def cloud_environment(base: dict | None = None) -> dict:
-    env = dict(os.environ if base is None else base)
-    explicit = {key.lower(): value for key, value in env.items() if key.lower() in {"http_proxy", "https_proxy"} and value}
-    if not explicit:
-        proxy = windows_proxy()
-        try:
-            address = urlsplit(proxy)
-            # Automatic discovery uses only a live local client, never a candidate core or remote credentials.
-            if address.scheme in {"http", "https"} and address.hostname in {"127.0.0.1", "localhost", "::1"} and address.port:
-                with socket.create_connection((address.hostname, address.port), timeout=0.5):
-                    pass
-                explicit = {"http_proxy": proxy, "https_proxy": proxy}
-        except (OSError, ValueError):
-            pass
-    # Runner gives lowercase variables precedence. Supply consistent values to .NET and gh.
-    for key, value in explicit.items():
-        env[key] = env[key.upper()] = value
+    env = {key: value for key, value in (os.environ if base is None else base).items()
+           if key.lower() not in {"http_proxy", "https_proxy", "all_proxy"}}
     bypass = next((value for key, value in env.items() if key.lower() == "no_proxy"), "")
     hosts = list(dict.fromkeys([x.strip() for x in bypass.split(",") if x.strip()] + ["localhost", "127.0.0.1", "::1"]))
     env["no_proxy"] = env["NO_PROXY"] = ",".join(hosts)
     return env
+
+
+def vpn_environment() -> dict:
+    """A reachable local listener is evidence of a client, not proof of a VPN tunnel."""
+    import psutil
+    listener = False
+    proxy = windows_proxy()
+    try:
+        address = urlsplit(proxy)
+        if address.scheme in {"http", "https"} and address.hostname in {"127.0.0.1", "localhost", "::1"} and address.port:
+            with socket.create_connection((address.hostname, address.port), timeout=0.5):
+                listener = True
+    except (OSError, ValueError):
+        pass
+    clients = []
+    for process in psutil.process_iter(["name"]):
+        name = (process.info["name"] or "").lower()
+        if name in {"mihomo.exe", "clash.exe", "clash-meta.exe", "clash-party.exe", "clash-verge.exe"}:
+            clients.append(name)
+    return {"local_proxy_reachable": listener, "client_detected": bool(clients),
+            "message": "检测到本机代理客户端，测速保留当前 VPN 和系统路由" if listener or clients else "未检测到本机代理客户端，测速使用当前系统路由",
+            "system_route_changed": False, "cloud_uses_local_http_proxy": False}

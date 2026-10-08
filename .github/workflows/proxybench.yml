@@ -71,6 +71,14 @@ jobs:
           echo "pool_sha256=$(sha256sum data/handoff/proxybench-pool.json.gz | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
       - id: encode
         run: python scripts/proxybench_channel.py encode --kind handoff
+      - name: Prepare trusted mirror download metadata
+        run: |
+          python -c "import json,os;from pathlib import Path;p=Path(os.environ['RUNNER_TEMP'])/'handoff.json';r=json.loads(Path('data/handoff/proxybench-cloud-health.json').read_text());p.write_text(json.dumps({'repository':'jachjkl/Noode-CG-ProxyBench','ref':'${{ steps.commit.outputs.ref }}','sha256':'${{ steps.commit.outputs.pool_sha256 }}','session_id':r['session_id']}),encoding='utf-8')"
+      - name: Save trusted mirror download metadata
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: proxybench-handoff-metadata
+          path: ${{ runner.temp }}/handoff.json
   local-select:
     name: 本地真实代理测速
     needs: cloud-prepare
