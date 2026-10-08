@@ -56,6 +56,8 @@ def load_settings(config_path: str | Path) -> dict:
               "official_sample_count": int(block.get("official_sample_count", 10000)),
               "max_cycles": int(block.get("max_cycles", 0)), "sources": block.get("sources", {}),
               "auto_update": bool(block.get("auto_update", True)),
+              "auto_refresh_profile": bool(block.get("auto_refresh_profile", True)),
+              "profile_refresh_seconds": max(5.0, float(block.get("profile_refresh_seconds", 30))),
               "fast_entry_screen": bool(block.get("fast_entry_screen", True)),
               "speed_url": block.get("speed_url", "https://dl.google.com/chrome/install/standalonesetup64.exe"),
               "geo_urls": block.get("geo_urls", ["https://ipwho.is/", "https://api.country.is/"]),

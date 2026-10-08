@@ -21,6 +21,10 @@ class ProfileError(ValueError):
         super().__init__(f"缺少可用代理协议配置：{reason}")
 
 
+class ProfileChanged(RuntimeError):
+    pass
+
+
 class ProxyProfile:
     def __init__(self, value: dict) -> None:
         proxy = copy.deepcopy(value.get("proxy", value))
@@ -154,7 +158,7 @@ def discover_profiles(target_host: str = "") -> list[dict]:
     for root in roots:
         if not root.is_dir():
             continue
-        for path in list(root.glob("*.yaml")) + list((root / "profiles").glob("*.yaml")):
+        for path in list(root.glob("*.yaml")) + list((root / "profiles").glob("*.yaml")) + list((root / "work").glob("config.yaml")):
             try:
                 if path.stat().st_size > 20 * 1024 * 1024:
                     continue
@@ -178,6 +182,7 @@ def discover_profiles(target_host: str = "") -> list[dict]:
         party_active = False
     results.sort(key=lambda item: (not item["matches_worker"],
                                   not (party_active and "mihomo-party" in item["path"]),
+                                  "work" not in Path(item["path"]).parts,
                                   item["port"] != 443, item["path"], item["index"]))
     return results
 
@@ -198,6 +203,31 @@ def import_discovered(reference: dict, destination: Path) -> dict:
             continue
     atomic_write_text(destination, yaml.safe_dump({"proxy": profile._proxy, "validation_servers": servers}, allow_unicode=True))
     return summary
+
+
+def refresh_existing(destination: Path) -> dict:
+    """Sync current client parameters; no credentials or subscription URLs enter reports."""
+    try:
+        current = ProxyProfile.load(destination)
+        host = str(current._proxy.get("servername") or current._proxy.get("ws-opts", {}).get("headers", {}).get("Host") or "")
+    except ProfileError:
+        current, host = None, "jackoyu.dpdns.org"
+    if not host:
+        return {"changed": False, "status": "无匹配的代理配置来源"}
+    references = [row for row in discover_profiles(host) if row["matches_worker"]]
+    if not references:
+        return {"changed": False, "status": "未发现新配置，保留本机配置"}
+    reference = references[0]
+    try:
+        proxies = yaml.safe_load(Path(reference["path"]).read_text(encoding="utf-8-sig"))["proxies"]
+        candidate = ProxyProfile(proxies[reference["index"]])
+        changed = current is None or candidate.fingerprint != current.fingerprint
+        if changed:
+            import_discovered(reference, destination)
+        return {"changed": changed, "status": "已同步更新的代理配置" if changed else "当前代理配置已是最新",
+                **candidate.summary()}
+    except (OSError, ValueError, KeyError, IndexError, yaml.YAMLError):
+        return {"changed": False, "status": "新配置暂不可用，保留本机配置"}
 
 
 def safe_error(exc: BaseException) -> str:

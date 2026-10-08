@@ -21,7 +21,11 @@ def progress(live: dict, cloud: dict, health: dict) -> list[dict]:
                      if step.get("name") == "Decode digest-verified cloud candidate handoff"), {})
     phase = live.get("phase", "")
     cloud_run = cloud.get("run_id")
-    current = (str(live.get("workflow_run_id", "")) == str(cloud_run)) if cloud_run else not cloud
+    local_active = bool(live.get("local_process_active"))
+    new_local_session = (live.get("session_id") and live.get("session_id") == cloud.get("session_id")
+                         and live.get("workflow_run_id") and live.get("workflow_run_id") != cloud.get("local_before_dispatch"))
+    current = (str(live.get("workflow_run_id", "")) == str(cloud_run)) if cloud_run else (
+        not cloud or new_local_session or local_active and bool(live.get("workflow_run_id")))
     active = None
     if cloud.get("mode") == "validate":
         rows[0]["detail"] = "独立检查代理内核，未启动优选"
@@ -69,7 +73,7 @@ def progress(live: dict, cloud: dict, health: dict) -> list[dict]:
         active = 4
     elif local.get("conclusion") in {"failure", "cancelled", "timed_out"} and active is None:
         active = 3 if current and phase in {"general_retest", "jp_retest"} else 2
-    failed = cloud.get("status") == "Failed" or any(row.get("conclusion") in {"failure", "timed_out"} for row in (prepare, local, publish))
+    failed = (cloud.get("status") == "Failed" and not local_active) or any(row.get("conclusion") in {"failure", "timed_out"} for row in (prepare, local, publish))
     state = live.get("status") if current else cloud.get("status")
     if active is None and (failed or state == "Failed"):
         active = 0

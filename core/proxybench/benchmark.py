@@ -5,6 +5,7 @@ import copy
 import json
 import math
 import statistics
+import threading
 import time
 
 from .profile import safe_error
@@ -52,6 +53,8 @@ class Benchmark:
                             "200" if site == "cloudflare" and "/cdn-cgi/trace" in cloudflare_url else expected)
                            for site, url, expected in SITES)
         self.update = update or (lambda **_: None)
+        self.speed_active = set()
+        self.activity_lock = threading.Lock()
 
     def geo(self, name: str) -> dict:
         observations = []
@@ -87,6 +90,7 @@ class Benchmark:
                     self.control.checkpoint()
                     for record in records.values():
                         record["status"] = f"Round {round_index + 1}"
+                        record.update(active_site=site, active_round=round_index + 1)
                     self.update(stage=f"Round {round_index + 1}: {site}", candidates=list(records.values()))
                     pending = [name for name in names if not records[name].get("skip_reason")]
                     for offset in range(0, len(pending), rules["delay_concurrency"]):
@@ -101,6 +105,7 @@ class Benchmark:
                             seen = [item for values in records[name]["probes"].values() for item in values]
                             if sum(not item["success"] for item in seen) / (rules["round_count"] * 3) * 100 > rules["max_proxy_loss_percent"]:
                                 records[name]["skip_reason"] = "前序请求失败，已无法满足成功率门槛"
+                            self.update(candidates=list(records.values()))
                     for name in names:
                         if len(records[name]["probes"][site]) <= round_index:
                             records[name]["probes"][site].append({"success": False, "latency_ms": None, "skipped": True,
@@ -137,6 +142,17 @@ class Benchmark:
         completed(result)
 
     def speed_result(self, name: str, record: dict) -> dict:
+        with self.activity_lock:
+            self.speed_active.add(name)
+            self.update(speed_active=sorted(self.speed_active))
+        try:
+            return self._speed_result(name, record)
+        finally:
+            with self.activity_lock:
+                self.speed_active.discard(name)
+                self.update(speed_active=sorted(self.speed_active))
+
+    def _speed_result(self, name: str, record: dict) -> dict:
         result = copy.deepcopy(record)
         downloads = []
         for _ in range(self.rules["download_attempts"]):

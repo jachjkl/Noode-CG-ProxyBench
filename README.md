@@ -21,7 +21,7 @@ The application automatically connects these stages:
 
 The first launch downloads and registers a separate application-owned Windows runner. GitHub authentication comes from the owner's local `jachjkl` login. The public package contains no personal proxy credentials. The separately prepared owner-only package includes the real local profile at the owner's request and is never uploaded to GitHub Releases.
 
-The compact Chinese dashboard shows five actual workflow steps: cloud acquisition, candidate download, local selection, final retest, and GitHub publication. Completed steps use a fluorescent-yellow gradient, a silver-white light sweep, and rising particles; current, paused, failed, and insufficient-result states remain explicit. The publication step completes only after cloud push succeeds. The main list shows 300 IPs per page and eight summary columns, with detailed observations in a dialog. Work starts after the user clicks the primary start button.
+The compact Chinese dashboard shows five actual workflow steps: cloud acquisition, candidate download, local selection, final retest, and GitHub publication. Completed steps use a fluorescent-yellow gradient, a silver-white light sweep, and rising particles; current, paused, failed, and insufficient-result states remain explicit. The publication step completes only after cloud push succeeds. The candidate list and live benchmark occupy separate panes, each with independent 300-IP paging. The live pane includes in-flight requests and partial batch results, with detailed observations in a dialog. Work starts after the user clicks the primary start button.
 
 ## Discovery and replenishment
 
@@ -30,7 +30,7 @@ The compact Chinese dashboard shows five actual workflow steps: cloud acquisitio
 - Cloud history excludes every previously handed-off IP, including untested candidates and optional-source candidates. No later round reintroduces an earlier candidate IP.
 - Downloaded candidates are accumulated locally before proxy validation. Failed validation does not discard the first complete pool when another handoff arrives.
 - Replenishment continues until 100 ordinary candidates and 10 additional Japanese exits pass final retesting, unless stopped or the sources are exhausted. `max_cycles: 0` enables this default behavior; a positive value sets an explicit limit.
-- Resume uses saved batches. Continue fetching requests fresh candidates while retaining completed measurements and the current session's exclusion history.
+- Normal window closure clears transient candidate pools and checkpoints. Errors, unexpected interruption, and the explicit stop-and-save action preserve checkpoints. A newly opened window starts a new discovery session; resume explicitly restores an interrupted session. Continue fetching requests fresh candidates while retaining completed measurements and the current session's exclusion history. Five consecutive fetches, and later fetches in that same session, exclude all previously handed-off IPs.
 
 ## Measurement and publication rules
 
@@ -102,3 +102,10 @@ Version 1.1.1 separates local candidate-entry TCP timing from unified proxy webs
 The pinned upstream [cmliu/edgetunnel source](https://github.com/cmliu/edgetunnel/blob/af4f9837e1843e34159018713bc8749ccec3004d/_worker.js) treats `speed.cloudflare.com` and `cp.cloudflare.com` as special local-response domains in some paths. Worker [TCP restrictions](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/) also block direct outgoing sockets to Cloudflare ranges. The speed probe therefore uses a bounded 512 KiB HTTP range from Google's download service, through the candidate proxy, retaining body timing and route evidence. It does not accept a local 204 as a bandwidth result.
 
 The Windows EXE creates its `Noode-CG-ProxyBench` runtime folder next to the EXE. `--install-adjacent` exercises the same location without opening a window; explicit `--install-only PATH` remains available for packaging checks.
+
+
+## Runtime synchronization and updates
+
+Cloud dispatch uses a unique request identifier in the workflow title, independent of the Windows clock. Temporary monitoring failures retry without terminating the owned runner. The dashboard checks ownership of a live local core, so a child that outlives its monitor remains visible and cannot trigger a duplicate start. Local phase information advances the five-step display even when cloud job metadata is delayed.
+
+Each operation checks the official stable Mihomo release and downloads a verified update when necessary. The actual active local Clash configuration is checked at startup and periodically between batches. Changed protocol parameters synchronize locally, archive prior measurements, and restart measurement of the saved pool under the new fingerprint. Fixed-source session history remains intact; different configurations never compete using mixed old measurements.

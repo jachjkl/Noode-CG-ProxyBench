@@ -9,13 +9,13 @@ import socket
 import subprocess
 import time
 import zipfile
-from datetime import UTC, datetime
 from pathlib import Path
 
 from core.io_utils import atomic_write_json
 
 from .execution import cli_python
-from .profile import ProxyProfile, discover_profiles, import_discovered, safe_error
+from .mihomo_manager import owned_core_running
+from .profile import ProxyProfile, discover_profiles, import_discovered, refresh_existing, safe_error
 from .state import Control, RunLock, Stopped, Store
 
 REPOSITORY = "jachjkl/Noode-CG-ProxyBench"
@@ -136,16 +136,19 @@ class CloudController:
             token = ""
 
     def dispatch(self, session_id: str, reuse: bool) -> None:
-        before = datetime.now(UTC).isoformat()[:19]
+        request_id = secrets.token_hex(16)
         self.run_id = None
+        live_path = self.settings["state_dir"] / "live.json"
+        prior = json.loads(live_path.read_text(encoding="utf-8")) if live_path.exists() else {}
+        self.update(session_id=session_id, dispatch_id=request_id, local_before_dispatch=prior.get("workflow_run_id", ""))
         self.command(["workflow", "run", "proxybench.yml", "--repo", REPOSITORY, "--ref", "main", "-f",
-                      f"session_id={session_id}", "-f", f"reuse_handoff={str(reuse).lower()}", "-f", "prepare_only=false"])
+                      f"session_id={session_id}", "-f", f"dispatch_id={request_id}", "-f", f"reuse_handoff={str(reuse).lower()}", "-f", "prepare_only=false"])
         for _ in range(30):
             self.control.checkpoint()
             runs = self.command(["run", "list", "--repo", REPOSITORY, "--workflow", "proxybench.yml", "--limit", "20",
                                  "--json", "databaseId,createdAt,event,status,displayTitle"], as_json=True)
-            fresh = [x for x in runs if x["createdAt"] >= before and x.get("event") == "workflow_dispatch"
-                     and session_id in x.get("displayTitle", "")]
+            fresh = [x for x in runs if x.get("event") == "workflow_dispatch"
+                     and request_id in x.get("displayTitle", "")]
             if fresh:
                 self.run_id = fresh[0]["databaseId"]
                 return
@@ -155,10 +158,17 @@ class CloudController:
     def watch(self) -> dict:
         while True:
             self.control.checkpoint()
-            run = self.command(["run", "view", str(self.run_id), "--repo", REPOSITORY,
-                                "--json", "status,conclusion,url,jobs"], as_json=True)
+            try:
+                run = self.command(["run", "view", str(self.run_id), "--repo", REPOSITORY,
+                                    "--json", "status,conclusion,url,jobs"], as_json=True)
+            except (CloudError, subprocess.TimeoutExpired):
+                self.update(monitor_warning="云端状态读取暂时失败，正在重试；本地测量继续")
+                for _ in range(25):
+                    self.control.checkpoint()
+                    time.sleep(0.2)
+                continue
             current = next((job for job in run.get("jobs", []) if job.get("status") == "in_progress"), {})
-            self.update(stage=current.get("name") or run["status"], status=run["status"], run_id=self.run_id, run_url=run["url"],
+            self.update(stage=current.get("name") or run["status"], status=run["status"], run_id=self.run_id, run_url=run["url"], monitor_warning="",
                         jobs=[{"name": job["name"], "status": job["status"], "conclusion": job.get("conclusion"),
                                "steps": [{"name": step["name"], "status": step["status"], "conclusion": step.get("conclusion")}
                                          for step in job.get("steps", [])]} for job in run.get("jobs", [])])
@@ -170,11 +180,15 @@ class CloudController:
 
     def run(self, mode: str = "auto") -> dict:
         with RunLock(self.root / "runtime/cloud"):
+            if owned_core_running(self.settings["runtime_dir"]):
+                raise CloudError("本地测速仍在运行，请先暂停或停止保存；不能重复发送任务")
             return self._run(mode)
 
     def _run(self, mode: str) -> dict:
         self.control.path.unlink(missing_ok=True)
         try:
+            if self.settings.get("auto_refresh_profile"):
+                self.update(profile_update=refresh_existing(self.settings["profile"]))
             if not self.settings["profile"].exists():
                 references = [x for x in discover_profiles("jackoyu.dpdns.org") if x["matches_worker"] and x["port"] == 443]
                 if not references:

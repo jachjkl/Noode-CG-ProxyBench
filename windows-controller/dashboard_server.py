@@ -347,6 +347,9 @@ class DashboardState:
             if self.close_when_idle:
                 return
             self.close_when_idle = True
+        if getattr(self, "proxybench", None) is not None:
+            self.proxybench.request_close()
+            return
         self._append_dashboard_log("面板已请求关闭：停止新增优选，等待竞赛复测与发布收尾后退出后台。")
         try:
             self.stop_selection()
@@ -358,6 +361,8 @@ class DashboardState:
     def ready_to_close(self) -> bool:
         if not self.close_when_idle:
             return False
+        if getattr(self, "proxybench", None) is not None:
+            return self.proxybench.ready_to_close()
         self.refresh_github(force=True)
         with self.lock:
             controller_active = self.process is not None and self.process.poll() is None
@@ -1743,7 +1748,7 @@ def serve(
         auto_bench.action("auto-start", {})
     print("Noode-CG ProxyBench 真实代理优选窗口")
     print(f"浏览器地址：{url}")
-    print("关闭窗口会请求停止并保存断点；可重新打开继续。")
+    print("正常关闭清理本轮缓存；报错或异常中断保留断点。")
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
@@ -1776,6 +1781,8 @@ def serve(
         # session. Reset buttons, workflow-card latches and transient probe
         # files, while keeping local-rules.json and the published node cache.
         state.clear_session_state()
+        if getattr(state, "proxybench", None) is not None:
+            state.proxybench.finish_close(normal=state.close_when_idle)
         server.server_close()
     return 0
 

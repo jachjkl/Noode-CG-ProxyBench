@@ -21,7 +21,7 @@ from .controller import CoreError
 from .entry_probe import probe as entry_probe
 from .export import publish, recover
 from .mihomo_manager import MihomoManager
-from .profile import ProxyProfile, safe_error
+from .profile import ProfileChanged, ProxyProfile, refresh_existing, safe_error
 from .settings import current_rules
 from .state import Control, RunLock, Stopped, Store
 
@@ -70,6 +70,7 @@ class Pipeline:
         self.incumbents = []
         self.update_lock = threading.RLock()
         self.last_flush = 0.0
+        self.last_profile_check = 0.0
 
     def update(self, **values) -> None:
         with self.update_lock:
@@ -84,6 +85,7 @@ class Pipeline:
         self.status["mihomo"] = self.manager.health()
         state = self.store.state
         self.status.update(candidate_total=len(state.get("pool", [])), tested_count=len(state.get("results", {})),
+                           run_id=state.get("run_id"), session_id=state.get("session_id"),
                            workflow_run_id=os.environ.get("GITHUB_RUN_ID", ""),
                            qualified_count=sum(x.get("qualified", False) for x in state.get("results", {}).values()),
                            phase=state.get("phase", ""), cycle=state.get("cycle", 1), sources=state.get("sources", {}),
@@ -147,6 +149,12 @@ class Pipeline:
         batch_number = 0
         while remaining:
             self.control.checkpoint()
+            if self.settings.get("auto_refresh_profile") and time.monotonic() - self.last_profile_check >= self.settings["profile_refresh_seconds"]:
+                self.last_profile_check = time.monotonic()
+                refreshed = refresh_existing(self.settings["profile"])
+                self.update(profile_update=refreshed)
+                if refreshed["changed"]:
+                    raise ProfileChanged
             rules = fixed_rules or current_rules(self.settings)
             batch = remaining[:rules["batch_size"]]
             remaining = remaining[rules["batch_size"]:]
@@ -201,6 +209,17 @@ class Pipeline:
         return pool, report
 
     def run(self, resume: bool = False, handoff: bool = False) -> dict:
+        while True:
+            try:
+                if self.settings.get("auto_refresh_profile"):
+                    self.update(profile_update=refresh_existing(self.settings["profile"]))
+                    self.last_profile_check = time.monotonic()
+                return self._run(resume, handoff)
+            except ProfileChanged:
+                resume = True
+                self.update(stage="代理配置已更新，保留候选并重新测量", status="Running")
+
+    def _run(self, resume: bool = False, handoff: bool = False) -> dict:
         profile = ProxyProfile.load(self.settings["profile"])
         with RunLock(self.settings["runtime_dir"]):
             recover(self.settings["output_dir"])
@@ -214,7 +233,15 @@ class Pipeline:
                                       handoff_report.get("session_id") != state.get("session_id")):
                     state = {}
             if state and state.get("profile_fingerprint") != profile.fingerprint:
-                raise ValueError("Profile 已更改，不能混用旧测量；请开始新一轮")
+                if not self.settings.get("auto_refresh_profile"):
+                    raise ValueError("Profile 已更改，不能混用旧测量；请开始新一轮")
+                atomic_write_bytes(self.settings["state_dir"] / f"previous-profile-{secrets.token_hex(4)}-results.json.gz",
+                                   gzip.compress(json.dumps(state.get("results", {})).encode(), mtime=0))
+                state.update(results={}, general_results={}, jp_results={}, entry_results={}, phase="scan", profile_fingerprint=profile.fingerprint)
+                for item in [*state.get("pool", []), *state.get("previous_general", []), *state.get("previous_jp", [])]:
+                    if "authorized_proxy_candidate" not in item.get("source_types", []):
+                        item["port"] = profile.port
+                self.store.partial = {}
             if state and self.settings.get("fast_entry_screen") and state.get("measurement_policy") != "entry-proxy-v4":
                 if state.get("results"):
                     atomic_write_bytes(self.settings["state_dir"] / f"previous-policy-{secrets.token_hex(4)}-results.json.gz",
@@ -224,6 +251,7 @@ class Pipeline:
             self.control.path.unlink(missing_ok=True)
             self.store.state = state
             try:
+                self.update(stage="检查代理环境与内核更新", status="Running")
                 self.manager.ensure(self.settings["auto_update"])
                 validation_path = self.settings["runtime_dir"] / "validation.json"
                 validation = json.loads(validation_path.read_text(encoding="utf-8")) if validation_path.exists() else {}
@@ -307,6 +335,9 @@ class Pipeline:
                     state["pool"].extend(item for item in fresh if item["ip"] not in previous)
                     state.update(cycle=state["cycle"] + 1, phase="scan", sources=source_report, general_results={}, jp_results={})
                     self.store.commit()
+            except ProfileChanged:
+                self.store.commit()
+                raise
             except Stopped:
                 self.store.commit()
                 self.update(status="Stopped", stage="状态已保存，可继续")

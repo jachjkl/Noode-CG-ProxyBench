@@ -3,12 +3,14 @@ from __future__ import annotations
 import gzip
 import json
 import secrets
+import statistics
 import subprocess
 import threading
 
 from core.io_utils import atomic_write_json
 
 from .execution import cli_python
+from .mihomo_manager import owned_core_running
 from .profile import ProxyProfile, discover_profiles, import_discovered, save_import
 from .settings import current_rules, load_settings, validate_rules
 from .workflow import progress
@@ -25,17 +27,28 @@ class BenchDashboard:
         self.lock = threading.RLock()
         self.log_handle = None
         self.file_cache = {}
+        self.preserve_on_close = False
+        self.closing = False
+        prior = self.read_cached(self.settings["state_dir"] / "live.json", default={})
+        if (self.settings["state_dir"] / "batch-state.json").exists() and prior.get("status") in {"Running", "Paused", "Stopped", "Failed"}:
+            self.preserve_on_close = True
         atomic_write_json(self.settings["state_dir"] / "session.json", {"session_id": secrets.token_hex(16)})
 
     def read_cached(self, path, *, compressed=False, default=None):
         if not path.exists():
             return default
-        stat = path.stat()
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            return default
         identity = (stat.st_mtime_ns, stat.st_size)
         cached = self.file_cache.get(path)
         if cached and cached[0] == identity:
             return cached[1]
-        content = path.read_bytes()
+        try:
+            content = path.read_bytes()
+        except FileNotFoundError:
+            return default
         value = json.loads(gzip.decompress(content) if compressed else content)
         self.file_cache[path] = (identity, value)
         return value
@@ -48,13 +61,20 @@ class BenchDashboard:
         cloud = self.read_cached(self.app / "data/handoff/proxybench-cloud-health.json", default={})
         same_pool = bool(live.get("sources", {}).get("seed") and live["sources"]["seed"] == cloud.get("seed"))
         measured = dict(self.read_cached(settings["state_dir"] / "benchmark-results.json.gz", compressed=True, default={})) if same_pool or not cloud else {}
+        partial = self.read_cached(settings["state_dir"] / "partial-batch.json", default={})
+        if partial.get("run_id") and partial.get("run_id") == live.get("run_id") and partial.get("phase") == live.get("phase"):
+            measured.update(partial.get("results", {}))
         active_rows = live.get("candidates", []) if same_pool or not cloud or live.get("phase") == "validation" else []
         for row in active_rows:
             measured[f"{row['ip']}:{row['port']}"] = row
         if kind == "published-results":
             rows = self.read_cached(settings["output_dir"] / "nodes.json", default=[])
+        elif kind == "live-results":
+            active_keys = {f"{row['ip']}:{row['port']}" for row in active_rows}
+            rows = [row for row in measured.values() if row.get("probes") or row.get("proxy_probe_count")]
+            rows.sort(key=lambda row: (f"{row['ip']}:{row['port']}" in active_keys, row.get("tested_at", "")), reverse=True)
         elif kind == "results":
-            rows = [row for row in measured.values() if row.get("tested_at")]
+            rows = [row for row in measured.values() if row.get("tested_at") and row.get("status") != "Rejected Entry"]
         else:
             cumulative = settings["state_dir"] / "candidate-pool.json.gz"
             if same_pool and cumulative.exists():
@@ -69,6 +89,17 @@ class BenchDashboard:
         pages = max(1, (total + 299) // 300)
         page = min(page, pages)
         visible = rows[(page - 1) * 300:page * 300]
+        if kind == "live-results":
+            visible = [dict(row) for row in visible]
+            for row in visible:
+                probes = [p for values in row.get("probes", {}).values() for p in values if not p.get("skipped")]
+                row["completed_probe_count"] = len(probes)
+                delays = [p["latency_ms"] for p in probes if p.get("success") and p.get("latency_ms") is not None]
+                row["live_response_ms"] = statistics.fmean(delays) if delays else None
+                if row.get("proxy_name") in live.get("speed_active", []):
+                    row["status"] = "Speed Testing"
+                if not row.get("tested_at") and live.get("status") in {"Stopped", "Paused", "Failed"}:
+                    row["status"] = live["status"]
         if kind == "candidates":
             # Keep full candidate data on disk; send only this page and its actual measurements.
             visible = [{**row, **measured.get(f"{row['ip']}:{row['port']}", {}),
@@ -82,7 +113,9 @@ class BenchDashboard:
             live = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         except (OSError, ValueError):
             live = {"status": "正在刷新"}
-        running = bool(self.process and self.process.poll() is None)
+        local_running = owned_core_running(settings["runtime_dir"])
+        running = bool(self.process and self.process.poll() is None) or local_running
+        live["local_process_active"] = local_running
         if not running and live.get("status") in {"Validation Failed", "Validation Required"} and "带宽" in live.get("stage", ""):
             # Older acceptance messages are history; they are not a prerequisite of this version.
             live.update(status="Ready", stage="准备就绪，点击开始优选")
@@ -112,6 +145,7 @@ class BenchDashboard:
             self.log_handle = None
         return {"live": live, "profile": profile, "rules": current_rules(settings), "published": health,
                 "running": running,
+                "local_running": local_running,
                 "actions_url": f"https://github.com/{self.legacy.repository}/actions",
                 "cloud": cloud, "workflow": progress(live, cloud, health),
                 "can_resume": (settings["state_dir"] / "batch-state.json").exists()}
@@ -119,7 +153,7 @@ class BenchDashboard:
     def action(self, action: str, payload: dict) -> dict:
         with self.lock:
             settings = self.settings
-            running = bool(self.process and self.process.poll() is None)
+            running = bool(self.process and self.process.poll() is None) or owned_core_running(settings["runtime_dir"])
             if action == "resume-testing":
                 return self.action("resume-paused" if running else "resume", {})
             if action == "rules":
@@ -127,6 +161,8 @@ class BenchDashboard:
                 atomic_write_json(settings["rules_path"], rules)
                 return {"saved": True, "rules": rules, "effective": "下一批生效" if running else "立即生效"}
             if action in {"pause", "stop", "resume-paused"}:
+                if action == "stop" and not self.closing:
+                    self.preserve_on_close = True
                 path = settings["state_dir"] / "control.json"
                 if action == "resume-paused":
                     path.unlink(missing_ok=True)
@@ -159,6 +195,8 @@ class BenchDashboard:
             if action in {"start", "resume", "continue-fetch", "validate", "auto-start"}:
                 if running:
                     raise ValueError("已有任务正在运行")
+                if action in {"start", "auto-start"}:
+                    self.preserve_on_close = False
                 if action != "auto-start":
                     ProxyProfile.load(settings["profile"])
                 command = "validate-runtime" if action == "validate" else "auto-cloud"
@@ -179,6 +217,40 @@ class BenchDashboard:
                 return {"started": True, "action": action}
             if action == "cloud-start":
                 return self.action("auto-start", {})
-            if action in {"results", "candidates", "published-results"}:
+            if action in {"results", "live-results", "candidates", "published-results"}:
                 return self.rows(action, int(payload.get("page", int(payload.get("offset", 0)) // 300 + 1)))
             raise ValueError("未知操作")
+
+    def request_close(self) -> None:
+        live = self.read_cached(self.settings["state_dir"] / "live.json", default={})
+        cloud = self.read_cached(self.settings["state_dir"] / "cloud-live.json", default={})
+        self.preserve_on_close |= live.get("status") == "Failed" or cloud.get("status") == "Failed"
+        self.closing = True
+        self.action("stop", {})
+
+    def ready_to_close(self) -> bool:
+        return not (self.process and self.process.poll() is None or owned_core_running(self.settings["runtime_dir"]))
+
+    def finish_close(self, normal: bool) -> bool:
+        """Delete only known transient files after the owned task releases its locks."""
+        live = self.read_cached(self.settings["state_dir"] / "live.json", default={})
+        cloud = self.read_cached(self.settings["state_dir"] / "cloud-live.json", default={})
+        self.preserve_on_close |= live.get("status") == "Failed" or cloud.get("status") == "Failed"
+        if not normal or self.preserve_on_close or not self.ready_to_close():
+            return False
+        app = self.app.resolve()
+        state = self.settings["state_dir"].resolve()
+        if app not in state.parents or state.name != "proxy-bench":
+            raise ValueError("缓存目录不属于当前软件，未清理")
+        if state.exists():
+            for path in state.iterdir():
+                if path.is_file():
+                    path.unlink(missing_ok=True)
+        handoff = (app / "data/handoff").resolve()
+        if app not in handoff.parents:
+            raise ValueError("候选缓存目录不属于当前软件，未清理")
+        if not (app / ".git").exists():
+            for name in ("proxybench-pool.json.gz", "proxybench-cloud-health.json", "proxybench-session-history.json.gz", "proxybench-attempted.json.gz"):
+                (handoff / name).unlink(missing_ok=True)
+        self.file_cache.clear()
+        return True

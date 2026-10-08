@@ -29,6 +29,20 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
+def owned_core_running(root: Path) -> bool:
+    """Read-only ownership check, including an orphaned local benchmark child."""
+    root = root.resolve()
+    try:
+        owner = json.loads((root / "owner.json").read_text(encoding="utf-8"))
+        process = psutil.Process(int(owner["pid"]))
+        work = Path(owner["work"]).resolve()
+        return (root in work.parents and work.name.startswith("session-")
+                and Path(process.exe()).resolve() == root / ("mihomo.exe" if os.name == "nt" else "mihomo")
+                and abs(process.create_time() - owner["created"]) < 0.01 and str(work) in process.cmdline())
+    except (OSError, ValueError, KeyError, TypeError, psutil.Error):
+        return False
+
+
 def download(url: str, limit: int = 80 * 1024 * 1024) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": "Noode-CG-ProxyBench/1.0"})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))

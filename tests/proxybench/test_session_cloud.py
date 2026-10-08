@@ -24,7 +24,7 @@ class SessionCloudTests(unittest.TestCase):
                 "profile": root / "config/proxy-profile.local.yaml", "max_cycles": 3, "sources": {},
                 "official_sample_count": 10000}
 
-    def test_three_real_pool_builds_fetch_fixed_once_and_never_repeat_ip(self):
+    def test_five_real_pool_builds_fetch_fixed_once_and_never_repeat_ip(self):
         with tempfile.TemporaryDirectory() as directory:
             settings = self.settings(Path(directory))
             feeds = {"https://zip.cm.edu.kg/all.txt": b"104.16.1.1\n104.17.1.1",
@@ -32,7 +32,7 @@ class SessionCloudTests(unittest.TestCase):
                      "https://www.cloudflare.com/ips-v4/": b"104.16.0.0/13\n172.64.0.0/13"}
             fetch = Mock(side_effect=feeds.__getitem__)
             seen = set()
-            for index in range(3):
+            for index in range(5):
                 candidates, report = build(settings, 443, seen, seed=f"round-{index}", downloader=fetch, include_fixed=index == 0)
                 ips = {item["ip"] for item in candidates}
                 self.assertFalse(ips & seen)
@@ -41,7 +41,7 @@ class SessionCloudTests(unittest.TestCase):
             urls = [call.args[0] for call in fetch.call_args_list]
             self.assertEqual(urls.count("https://zip.cm.edu.kg/all.txt"), 1)
             self.assertEqual(urls.count("https://bestcf.pages.dev/lzj/all.txt"), 1)
-            self.assertEqual(len(seen), 30003)
+            self.assertEqual(len(seen), 50003)
 
     def test_cloud_history_excludes_unattempted_ips_and_reuses_exact_handoff(self):
         with tempfile.TemporaryDirectory() as directory:

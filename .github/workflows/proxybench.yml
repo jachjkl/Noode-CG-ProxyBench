@@ -1,5 +1,5 @@
 name: 自动获取IP与本地真实代理优选
-run-name: IP自动优选 ${{ inputs.session_id || github.run_id }}
+run-name: IP自动优选 ${{ inputs.session_id || github.run_id }} ${{ inputs.dispatch_id }}
 on:
   workflow_dispatch:
     inputs:
@@ -9,6 +9,10 @@ on:
         default: false
       session_id:
         description: 软件会话标识（固定链接每次打开只全量获取一次）
+        type: string
+        default: ''
+      dispatch_id:
+        description: 本机请求标识（不依赖本机时钟查找任务）
         type: string
         default: ''
       reuse_handoff:

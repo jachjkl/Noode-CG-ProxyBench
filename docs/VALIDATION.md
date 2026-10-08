@@ -64,3 +64,14 @@ A bounded real test screened 206 existing same-profile candidates in 1.283 secon
 All 238 automated tests pass. Workflow regressions cover stale-run isolation, verified download completion, paused retesting, GitHub confirmation before final completion, insufficient-result waiting, and retention/reset of cloud job evidence. Browser state fixtures verify the five-step fluorescent-yellow gradient, animated silver-white sweep, moving completion particles, current/pause/failure states, 12 px module spacing, responsive layout, and reduced-motion behavior. Those fixtures demonstrate interface behavior, not actual network qualification or publication.
 
 The EXE installs beside itself. PowerShell helper defaults also stay beside their scripts, with no hard-coded Desktop installation path. The original decorative particles and selected-button animation remain enabled.
+
+
+## Version 1.1.2 monitoring, live display, and lifecycle
+
+The reported installation logged two failures to identify newly dispatched runs, while an owned local child continued measuring. Before stopping that child at a checkpoint, the actual saved run contained 21,538 candidates, 1,000 proxy-tested entries, and 441 qualified results. The orphaned child was asked to stop through the normal control checkpoint, and the duplicate queued workflow was cancelled. Existing measurements were retained. This incident is not a completed 110-node publication.
+
+Dispatch now matches a unique request identifier rather than comparing server timestamps to the Windows clock. Monitoring retries transient API errors and retains job evidence. The local core ownership check prevents duplicate starts and allows the live phase to drive the dashboard during delayed or missing cloud metadata. Regression cases include shifted server timestamps, unrelated concurrent dispatches, monitor retry, and the exact lost-monitor/local-running condition.
+
+The UI has independent candidate and live-result panes. In-flight site observations and partial batch results appear before full-batch checkpoint commits; TCP-only rejections remain in the candidate pane. Browser replay verifies both panes at 300 rows, independent page navigation, a 50-row last result page, live response changes, correct third-stage selection, no JavaScript errors, and no desktop/mobile page overflow. Replayed values are interface fixtures, not network acceptance data.
+
+Lifecycle regressions verify normal-close cleanup, error/interruption checkpoint retention, five non-overlapping discovery cycles, credential-free update reporting, and archived/retested measurements after a protocol fingerprint change. Published files and the local proxy configuration are separate from transient candidate state.
