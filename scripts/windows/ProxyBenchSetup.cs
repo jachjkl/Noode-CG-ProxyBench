@@ -89,8 +89,12 @@ internal static class ProxyBenchSetup
                 if (!target.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException();
                 if (entry.FullName.EndsWith("/")) { Directory.CreateDirectory(target); continue; }
                 Directory.CreateDirectory(Path.GetDirectoryName(target));
-                // A later package never overwrites the owner's saved real Profile.
-                if (!(relative.Contains(".local.") && File.Exists(target)))
+                // Preserve installed profiles, saved rules, checkpoints and published output.
+                string packagePath = entry.FullName.Substring(slash + 1);
+                bool savedFile = relative.Contains(".local.") ||
+                    packagePath.StartsWith("app/data/", StringComparison.OrdinalIgnoreCase) ||
+                    packagePath.StartsWith("app/output/", StringComparison.OrdinalIgnoreCase);
+                if (!(savedFile && File.Exists(target)))
                 {
                     string temporary = target + ".install-new";
                     using (Stream source = entry.Open())
