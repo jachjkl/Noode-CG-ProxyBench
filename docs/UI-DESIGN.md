@@ -1,0 +1,9 @@
+# Dual-method diagnostic console
+
+The interface is a compact Windows network workbench. It uses a deliberate ink and slate palette with Chinese system typography, tabular numbers, and dense aligned measurements. This design follows the installed UI/UX Pro Max guidance and Anthropic's frontend-design skill, while preserving the owner's original completion animation.
+
+Colors: background `#0c1119`, surface `#141d29`, raised surface `#1b2736`, foreground `#edf3f7`, secondary text `#aebcc8`, start action `#f5f53f`. Completed steps and selected method/result controls use the original green gradient `#175c40` to `#298558` with a warm glow at the bottom and 32 rising particles. There is no sweep animation. Chinese typography uses Microsoft YaHei UI, with Segoe UI as a fallback; hierarchy is 23/18/14/12 pixels.
+
+The order is method selection and actions, five workflow steps, one statistics strip, local measurements beside publication competition results, an expandable candidate pool, a unified published table, independently saved method rules, and persistent Chinese logs. All tables paginate at 300 records. Proxy latency is explicitly described as access to specified websites; direct TCP latency is displayed separately. Every published row keeps its original rank and has an IP copy action.
+
+Controls have visible focus states, labeled inputs, contextual Chinese help, and status text in addition to color. Tables scroll inside their panels rather than expanding the page. Narrow windows stack the measurement panels and hide the desktop navigation. Off-screen and hidden-window particles pause; reduced-motion preferences remove animations. Visual checks must cover both methods, all three result tabs, pagination, saved quotas, competition results, Chinese logs, and narrow-window overflow.

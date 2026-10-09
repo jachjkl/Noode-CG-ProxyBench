@@ -18,6 +18,13 @@ def accumulate(settings: dict) -> dict:
         queued = {"pool": []}
     # The first complete feeds survive failed validation and later fresh handoffs.
     pool = merge([*queued.get("pool", []), *incoming["pool"]])
-    payload = {"pool": pool, "report": incoming["report"], "incumbents": incoming.get("incumbents", [])}
+    payload = {"pool": pool, "report": incoming["report"], "incumbents": incoming.get("incumbents", []),
+               "incumbents_by_mode": incoming.get("incumbents_by_mode", {})}
     atomic_write_bytes(path, gzip.compress(json.dumps(payload).encode(), mtime=0))
+    shared_path = settings["root"] / "data/window-candidates.json.gz"
+    shared = json.loads(gzip.decompress(shared_path.read_bytes())) if shared_path.exists() else {}
+    if shared.get("report", {}).get("session_id") != session:
+        shared = {}
+    payload["pool"] = merge([*shared.get("pool", []), *incoming["pool"]])
+    atomic_write_bytes(shared_path, gzip.compress(json.dumps(payload).encode(), mtime=0))
     return {"session_id": session, "queued_candidate_count": len(pool), "cycle": incoming["report"].get("cycle", 1)}

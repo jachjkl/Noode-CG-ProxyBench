@@ -14,38 +14,57 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.io_utils import atomic_write_bytes, atomic_write_json
 from core.proxybench.export import ARTIFACTS, gate, nodes_text
+from core.proxybench.modes import OUTPUTS, validate_limits
 
 HANDOFF = {"data/handoff/proxybench-pool.json.gz", "data/handoff/proxybench-cloud-health.json"}
 RESULTS = {"output/nodes.txt", "output/nodes.json", "output/nodes.csv", "output/api.json", "output/ip.zip",
            "output/health.json", "data/handoff/proxybench-attempted.json.gz"}
+RESULTS.update(f"output/Nodes-TCP/{name}" for name in (*ARTIFACTS, "health.json"))
+
+
+def result_prefix(files: dict[str, bytes]) -> str:
+    paths = [prefix for prefix in OUTPUTS.values() if f"{prefix}/health.json" in files]
+    if len(paths) != 1:
+        raise ValueError("结果交接必须只包含一种测速方式的健康报告")
+    prefix = paths[0]
+    if any(name.startswith("output/") and (not name.startswith(prefix + "/") or "/" in name[len(prefix) + 1:]) for name in files):
+        raise ValueError("禁止一种测速方式覆盖另一种结果目录")
+    return prefix
 
 
 def validate_result_files(files: dict[str, bytes]) -> None:
-    if "output/health.json" not in files:
-        raise ValueError("缺少发布健康报告")
-    health = json.loads(files["output/health.json"])
+    prefix = result_prefix(files)
+    health = json.loads(files[f"{prefix}/health.json"])
+    expected_mode = "tcp_tls" if prefix == OUTPUTS["tcp_tls"] else "proxy"
+    if health.get("measurement_mode", "proxy") != expected_mode:
+        raise ValueError("测速方式与发布目录不一致")
+    limits = validate_limits(health.get("publication_limits"))
     if health.get("published"):
-        if {f"output/{name}" for name in ARTIFACTS} - files.keys():
+        if {f"{prefix}/{name}" for name in ARTIFACTS} - files.keys():
             raise ValueError("发布结果缺少输出文件，必须包含 output/nodes.txt")
-        records = json.loads(files["output/nodes.json"])
-        if not gate(records, allow_partial=health.get("manual_publication") is True):
-            raise ValueError("拒绝不满足 100+10+110 的发布结果")
-        if files["output/nodes.txt"] != nodes_text(records).encode("utf-8"):
+        records = json.loads(files[f"{prefix}/nodes.json"])
+        if not gate(records, allow_partial=health.get("manual_publication") is True, limits=limits):
+            raise ValueError("拒绝不满足所设发布数量和质量的结果")
+        if any(row.get("measurement_mode", "proxy") != expected_mode for row in records):
+            raise ValueError("不得混合不同测速方式的记录")
+        if files[f"{prefix}/nodes.txt"] != nodes_text(records).encode("utf-8"):
             raise ValueError("nodes.txt 必须与优选结果一致，使用 IP:端口#国家代码 格式")
-    elif any(name.startswith("output/") and name != "output/health.json" for name in files):
+    elif any(name.startswith("output/") and name != f"{prefix}/health.json" for name in files):
         raise ValueError("未通过门槛的结果不能覆盖订阅")
 
 
-def pack(root: Path, kind: str) -> bytes:
+def pack(root: Path, kind: str, mode="proxy") -> bytes:
     allowed = HANDOFF if kind == "handoff" else RESULTS
     if kind == "result":
-        health = json.loads((root / "output/health.json").read_text(encoding="utf-8"))
+        prefix = OUTPUTS[mode]
+        health = json.loads((root / prefix / "health.json").read_text(encoding="utf-8"))
+        allowed = {f"{prefix}/{name}" for name in (*ARTIFACTS, "health.json")} | {"data/handoff/proxybench-attempted.json.gz"}
         if health.get("published"):
-            records = json.loads((root / "output/nodes.json").read_text(encoding="utf-8"))
-            if not gate(records, allow_partial=health.get("manual_publication") is True):
+            records = json.loads((root / prefix / "nodes.json").read_text(encoding="utf-8"))
+            if not gate(records, allow_partial=health.get("manual_publication") is True, limits=health.get("publication_limits")):
                 raise ValueError("云端发布门槛校验失败")
         else:
-            allowed = {"output/health.json", "data/handoff/proxybench-attempted.json.gz"}
+            allowed = {f"{prefix}/health.json", "data/handoff/proxybench-attempted.json.gz"}
     files = {relative: (root / relative).read_bytes() for relative in sorted(allowed) if (root / relative).is_file()}
     if kind == "result":
         validate_result_files(files)
@@ -83,7 +102,8 @@ def emit_outputs(content: bytes, kind: str, root: Path) -> None:
     if kind == "result":
         import io
         with zipfile.ZipFile(io.BytesIO(content)) as package:
-            health = json.loads(package.read("output/health.json"))
+            files = {name: package.read(name) for name in package.namelist()}
+            health = json.loads(files[f"{result_prefix(files)}/health.json"])
         values["needs_more"] = str(bool(health.get("needs_more"))).lower()
     output = Path(os.environ["GITHUB_OUTPUT"])
     with output.open("a", encoding="utf-8") as handle:

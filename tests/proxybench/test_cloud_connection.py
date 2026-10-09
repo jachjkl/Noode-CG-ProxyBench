@@ -88,7 +88,7 @@ class CloudConnectionTests(unittest.TestCase):
                 self.assertTrue(controller.run("resume")["published"])
             self.assertEqual([call.args for call in controller.dispatch.call_args_list], [("same-session", True)] * 2)
             self.assertEqual(Store(controller.settings["state_dir"]).load()["results"], {"saved": {"qualified": True}})
-            live = json.loads((controller.settings["state_dir"] / "live.json").read_text())
+            live = json.loads((controller.settings["state_dir"] / "live.json").read_text(encoding="utf-8"))
             self.assertEqual(live["qualified_count"], 111)
             self.assertFalse(live["speed_active"])
 
@@ -100,7 +100,7 @@ class CloudConnectionTests(unittest.TestCase):
             with patch("core.proxybench.cloud.ProxyProfile.load"):
                 self.assertEqual(controller.run("resume")["reason"], "cancelled")
             controller.dispatch.assert_called_once()
-            cloud = json.loads((controller.settings["state_dir"] / "cloud-live.json").read_text())
+            cloud = json.loads((controller.settings["state_dir"] / "cloud-live.json").read_text(encoding="utf-8"))
             live = json.loads((controller.settings["state_dir"] / "live.json").read_text())
             self.assertEqual(live["status"], "Stopped")
             self.assertTrue(cloud["interrupted"])

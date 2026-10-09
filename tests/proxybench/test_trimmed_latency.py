@@ -17,7 +17,7 @@ class TrimmedLatencyTests(unittest.TestCase):
 
     def test_each_site_drops_one_low_and_high_then_three_means_are_averaged(self):
         record = self.record(([1000, 90, 10, 110, 100], [20, 80, 90, 100, 2000], [30, 70, 80, 90, 3000]))
-        calculate(record, RULES)
+        calculate(record, {**RULES, "max_proxy_jitter_ms": 10000})
         self.assertEqual(record["google_retained_ms"], [90, 100, 110])
         self.assertEqual(record["google_discarded_ms"], [10, 1000])
         self.assertEqual([record[f"{site}_average_ms"] for site, _, _ in SITES], [100, 90, 80])

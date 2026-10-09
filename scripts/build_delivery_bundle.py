@@ -51,10 +51,11 @@ def assemble(destination: Path, *, windows: Path, installer: Path, source: Path,
 修复：双击“准备修复工作区.cmd”，生成“修复工作区/Noode-CG-ProxyBench”后编辑其中的源码。再次运行准备脚本会保留已有源码修改。修复后双击“重新打包.cmd”，新包写入修复工作区的 dist 文件夹。本包使用自带 Python 和依赖，无需单独安装 Python，也不要求工作区有 .git 目录。
 
 本地界面：windows-controller/dashboard/proxybench.html、proxybench.js、proxybench.css 和 app.css；原有粒子上升、选中荧光与点击波纹均包含。
-本地测速：core/proxybench/entry_probe.py、benchmark.py、controller.py、settings.py。
+本地测速：core/proxybench/entry_probe.py、benchmark.py、direct_benchmark.py、controller.py、settings.py。顶部选择代理三网站或 TCP／TLS 免代理，常规与日本发布数量均在规则中分别保存。
 五步流程与完成动画：core/proxybench/workflow.py、cloud.py、dashboard.py，以及本地界面的 proxybench.js、proxybench.css。
 云端流程：.github/workflows/proxybench.yml、sources/、core/proxybench/pipeline.py。
-输出与推送：core/proxybench/export.py、scripts/proxybench_channel.py；最终文件为 output/nodes.txt，每行如 82.139.242.5:443#DE。初始空文件不是已完成的优选结果。
+输出与推送：core/proxybench/export.py、scripts/proxybench_channel.py；代理结果在 output/nodes.txt，TCP／TLS 结果在 output/Nodes-TCP/nodes.txt，每行如 82.139.242.5:443#DE。初始空文件不是已完成的优选结果。
+运行状态：代理 data/proxy-bench，免代理 data/tcp-bench；规则 data/proxybench-rules.json 与 data/tcpbench-rules.json；中文日志 logs/proxy-events.jsonl 与 logs/tcp_tls-events.jsonl，关闭后保留。
 版本与打包：core/proxybench/__init__.py 中的 VERSION；scripts/build_windows_package.py、build_windows_installer.py、package_proxybench.py 和 build_delivery_bundle.py。修改版本时只需更新 VERSION。
 
 构建缓存只包含 Python 压缩包、依赖安装包、GitHub 工具和 Mihomo 内核，不包含执行器注册、登录凭据、日志或测速运行状态。

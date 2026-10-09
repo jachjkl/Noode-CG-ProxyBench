@@ -90,6 +90,66 @@ class Controller:
         if self.call("/proxies/BENCHMARK-PROXY").get("now") != name:
             raise RoutingError("Selected Proxy 不匹配")
 
+    def site_samples(self, name: str, url: str, expected: str, timeout: float, count: int, *, checkpoint, observed, should_stop) -> None:
+        """Warm once and time HEAD headers on a verified candidate-specific TLS connection."""
+        destination = urlsplit(url)
+        if destination.scheme != "https" or destination.username or destination.password or name not in self.named_ports:
+            raise RoutingError("快速测试必须使用独立候选入站和 HTTPS")
+        path = (destination.path or "/") + ("?" + destination.query if destination.query else "")
+        connection = http.client.HTTPSConnection("127.0.0.1", self.named_ports[name], timeout=timeout, context=make_ssl_context(True, "TLSv1.2"))
+        connection.set_tunnel(destination.hostname, destination.port or 443)
+        proof = {}
+        bounds = [int(v) for v in expected.split("-")]
+        def head():
+            connection.request("HEAD", path, headers={"Host": destination.hostname, "User-Agent": "Go-http-client/1.1", "Connection": "keep-alive"})
+            response = connection.getresponse()
+            status = response.status
+            response.read()
+            response.close()
+            return status
+        try:
+            checkpoint()
+            stage = "连接与 TLS"
+            try:
+                connection.connect()
+                stage = "指定代理路由验证"
+                proof = self._connection_proof(name, connection.sock.getsockname()[1])
+                stage = "网站预热"
+                warm_status = head()  # Same warm-response timing definition as Mihomo unified delay.
+                core_timing = not bounds[0] <= warm_status <= bounds[-1]
+            except (OSError, ValueError, http.client.HTTPException, CoreError) as exc:
+                observed({"success": False, "latency_ms": None, "selected_proxy": name, "destination": url,
+                          "error": "候选代理连接、握手或网站预热失败", "expected_status": expected,
+                          "error_category": type(exc).__name__, "failure_stage": stage})
+                for _ in range(count - 1):
+                    checkpoint()
+                    if should_stop():
+                        break
+                    observed(self.delay(name, url, expected, timeout))
+                return
+            for _ in range(count):
+                checkpoint()
+                if should_stop():
+                    return
+                if core_timing or connection.sock is None:
+                    # Endpoint-incompatible warmup or closed HEAD connections keep original core timing.
+                    observed(self.delay(name, url, expected, timeout))
+                    continue
+                started = time.perf_counter()
+                try:
+                    status = head()
+                    latency = (time.perf_counter() - started) * 1000
+                    passed = bounds[0] <= status <= bounds[-1]
+                    observed({**proof, "success": passed, "latency_ms": latency if passed else None,
+                              "destination": url, "http_status": status, "expected_status": expected,
+                              "connection_reused": True, "error": "" if passed else "网站状态不符合要求"})
+                except (OSError, ValueError, http.client.HTTPException):
+                    observed({**proof, "success": False, "latency_ms": None, "destination": url,
+                              "expected_status": expected, "error": "网站请求超时或连接中断"})
+                    connection.close()
+        finally:
+            connection.close()
+
     def request_port(self, name: str) -> int:
         if name in self.named_ports:
             return self.named_ports[name]

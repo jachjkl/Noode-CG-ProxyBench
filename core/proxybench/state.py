@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import gzip
 import hashlib
 import json
@@ -118,4 +119,15 @@ class Control:
                 return
             self.announce("Paused")
             time.sleep(0.2)
+        self.announce("Running")
+
+    async def async_checkpoint(self) -> None:
+        while self.path.exists():
+            action = json.loads(self.path.read_text(encoding="utf-8")).get("action")
+            if action == "stop":
+                raise Stopped
+            if action != "pause":
+                return
+            self.announce("Paused")
+            await asyncio.sleep(.2)
         self.announce("Running")

@@ -11,11 +11,12 @@ import time
 import zipfile
 
 from core.io_utils import atomic_write_bytes, atomic_write_json
-from scripts.proxybench_channel import pack, validate_result_files
+from scripts.proxybench_channel import pack, result_prefix, validate_result_files
 from scripts.sync_cloud_handoff import download, sources
 
 from .cloud import REPOSITORY, CloudController, CloudError
 from .cloud_network import vpn_environment
+from .events import EventLog, chinese
 from .pipeline import Pipeline
 from .profile import ProxyProfile, discover_profiles, import_discovered, refresh_existing, safe_error
 from .queue import accumulate
@@ -24,6 +25,17 @@ from .state import Stopped, Store
 
 class DesktopCloudController(CloudController):
     """No Actions Worker owns the long-running local measurements."""
+
+    @property
+    def pending_dir(self):
+        return self.root / "runtime" / ("pending-publish-tcp" if self.settings.get("measurement_mode") == "tcp_tls" else "pending-publish")
+
+    def update(self, **values):
+        previous = (self.live.get("status"), self.live.get("stage"))
+        super().update(**values)
+        if previous != (self.live.get("status"), self.live.get("stage")):
+            EventLog(self.root, self.settings.get("measurement_mode", "proxy")).append(chinese(str(values.get("stage") or values.get("status") or "")),
+                                                                                level="error" if values.get("status") == "Failed" else "info")
 
     def command(self, args: list[str], **kwargs):
         import subprocess
@@ -93,7 +105,7 @@ class DesktopCloudController(CloudController):
         accumulate(self.settings)
 
     def local_select(self, *, publish_only: bool = False) -> dict:
-        self.update(status="Local", stage="本地真实代理测速", handoff_ready=True, download_ready=True, local_detached=True,
+        self.update(status="Local", stage="本地 TCP／TLS 直连测速" if self.settings.get("measurement_mode") == "tcp_tls" else "本地真实代理测速", handoff_ready=True, download_ready=True, local_detached=True,
                     run_id=self.run_id or "local-resume", session_id=Store(self.settings["state_dir"]).load().get("session_id", self.live.get("session_id", "")))
         self.settings["workflow_run_id"] = str(self.run_id or "local-resume")
         if publish_only:
@@ -114,14 +126,14 @@ class DesktopCloudController(CloudController):
         return {**result, "status": "success", "run_url": run["url"], "cloud_confirmed": True}
 
     def upload_pending(self) -> tuple[str, str]:
-        pending = self.root / "runtime/pending-publish"
+        pending = self.pending_dir
         pending.mkdir(parents=True, exist_ok=True)
         manifest = pending / "manifest.json"
         if manifest.exists():
             expected = json.loads(manifest.read_text(encoding="utf-8"))["sha256"]
             content = (pending / "result.zip").read_bytes()
         else:
-            content = pack(self.root, "result")
+            content = pack(self.root, "result", self.settings.get("measurement_mode", "proxy"))
             expected = hashlib.sha256(content).hexdigest()
             atomic_write_bytes(pending / "result.zip", content)
             atomic_write_json(manifest, {"sha256": expected})
@@ -144,7 +156,7 @@ class DesktopCloudController(CloudController):
         run = self.watch()
         if run.get("conclusion") != "success":
             raise CloudError("云端发布未确认，完整结果已保存在本机；可继续重传")
-        pending = self.root / "runtime/pending-publish"
+        pending = self.pending_dir
         if json.loads((pending / "manifest.json").read_text(encoding="utf-8"))["sha256"] != expected:
             raise CloudError("发布确认摘要不匹配")
         (pending / "result.zip").unlink()
@@ -156,24 +168,27 @@ class DesktopCloudController(CloudController):
         try:
             network = vpn_environment()
             self.update(network=network, cloud_connection="公开文件使用多镜像，鉴权操作使用 GitHub 官方接口")
-            if self.settings.get("auto_refresh_profile"):
+            direct = self.settings.get("measurement_mode") == "tcp_tls"
+            if not direct and self.settings.get("auto_refresh_profile"):
                 self.update(profile_update=refresh_existing(self.settings["profile"]))
-            if not self.settings["profile"].exists():
+            if not direct and not self.settings["profile"].exists():
                 references = [row for row in discover_profiles("jackoyu.dpdns.org") if row["matches_worker"] and row["port"] == 443]
                 if not references:
                     raise CloudError("缺少可用代理协议配置：请在窗口导入现有节点")
                 import_discovered(references[0], self.settings["profile"])
-            ProxyProfile.load(self.settings["profile"])
+            if not direct:
+                ProxyProfile.load(self.settings["profile"])
             state = Store(self.settings["state_dir"]).load()
             session_path = self.settings["state_dir"] / "session.json"
             session = json.loads(session_path.read_text(encoding="utf-8")) if session_path.exists() else {"session_id": secrets.token_hex(16)}
             if mode in {"resume", "continue", "publish"} and state.get("session_id"):
                 session["session_id"] = state["session_id"]
             atomic_write_json(session_path, session)
-            pending = (self.root / "runtime/pending-publish/manifest.json").exists()
+            pending = (self.pending_dir / "manifest.json").exists()
             if pending:
-                with zipfile.ZipFile(self.root / "runtime/pending-publish/result.zip") as package:
-                    health = json.loads(package.read("output/health.json"))
+                with zipfile.ZipFile(self.pending_dir / "result.zip") as package:
+                    files = {name: package.read(name) for name in package.namelist()}
+                    health = json.loads(files[f"{result_prefix(files)}/health.json"])
                 run = self.publish_pending()
                 if mode in {"resume", "publish"} and health.get("published"):
                     self.control.path.with_name("publish-request.json").unlink(missing_ok=True)
@@ -182,6 +197,13 @@ class DesktopCloudController(CloudController):
             if mode == "publish":
                 return self.finish_manual(self.local_select(publish_only=True))
             resumable = mode == "resume" and state.get("phase") in {"scan", "general_retest", "jp_retest", "publish"}
+            shared_handoff = self.root / "data/handoff/proxybench-pool.json.gz"
+            if mode == "auto" and not state and shared_handoff.exists():
+                import gzip
+                current = json.loads(gzip.decompress(shared_handoff.read_bytes()))
+                if current.get("report", {}).get("session_id") == session["session_id"]:
+                    accumulate(self.settings)
+                    resumable = True
             if mode == "resume" and not state and (self.root / "data/handoff/proxybench-pool.json.gz").exists():
                 import gzip
                 saved = json.loads(gzip.decompress((self.root / "data/handoff/proxybench-pool.json.gz").read_bytes()))
@@ -208,7 +230,7 @@ class DesktopCloudController(CloudController):
                     return self.finish_manual(result)
                 if result.get("published"):
                     run = self.publish_pending()
-                    self.update(status="Completed", stage="普通100个和日本10个已复测并推送 GitHub")
+                    self.update(status="Completed", stage=f"常规 {result.get('general_final_count', 0)} 个和日本 {result.get('jp_final_count', 0)} 个已复测并推送 GitHub")
                     return {"status": "success", "published": True, "run_url": run["url"]}
                 if not result.get("needs_more"):
                     return result

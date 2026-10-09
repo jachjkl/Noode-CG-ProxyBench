@@ -1,115 +1,70 @@
 # Noode-CG-ProxyBench
 
-An independent Cloudflare IP optimizer that measures real authenticated proxy traffic with an isolated Mihomo core. Surviving candidates become distinct proxy nodes using the owner's actual Worker or EdgeTunnel configuration.
+A standalone Windows IP optimizer with two selectable measurement methods: authenticated proxy website tests and direct TCP/TLS tests adapted from the original local package. The application interface and operating instructions are Chinese; this README and development documentation are English.
 
-The Windows interface is Chinese. This README and the development documentation are English.
+## Run on Windows
 
-## Windows application
+Double-click the Windows EXE, or extract the Windows ZIP and run its launcher. The EXE installs `Noode-CG-ProxyBench` beside itself. Python, dependencies, GitHub CLI, curl, and Mihomo are included. Existing saved rules, profiles, results, and logs survive upgrades. The owner's private package stays local; public source contains no proxy credentials.
 
-Run the Windows EXE to install and open the local application, then click the primary start button. Alternatively, extract the Windows ZIP and double-click `Start-ProxyBench.vbs`. Python, PyYAML, psutil, GitHub CLI, curl, and Mihomo are included.
+Choose a method at the top, save its rules and publication counts, then start optimization. Each method has its own five-step workflow, live measurements and rejection table, publication competition table, timer, and checkpoint. Tables paginate at 300 records. The unified cloud table displays both methods with their original ranks, location, measured latency, loss, jitter, speed, and per-IP copy actions. Chinese event logs remain in `logs/` after closure. Original rising particles, green completion gradients, bottom fluorescence, and button ripples remain; reduced-motion preferences are respected.
 
-The application automatically connects these stages:
+## Two measurement methods
 
-1. Request a GitHub Actions run using the owner's local GitHub login.
-2. Fetch both configured feeds in full and sample 10,000 additional official Cloudflare IPv4 candidates.
-3. Download the immutable handoff through multiple public mirrors and verify its trusted SHA-256.
-4. Measure candidate-specific proxy access, response times, request success, and the original package's small-sample network speed on Windows.
-5. Retest current candidates against the previously published ordinary TOP100, select the best 100, and append 10 independently verified Japanese exits.
-6. Upload the allowlisted results to Ubuntu for final validation and publication.
+| Method | Measurement | Default preset | Output |
+| --- | --- | --- | --- |
+| Authenticated proxy | Five requests each to Google, Cloudflare and GitHub; remove one highest and one lowest per site, average the remaining samples, then average the three site means. Candidate-specific small-sample download. | Entry and composite limits 300 ms, failed requests 0%, response jitter at most 500 ms, download at least 3.01 Mbps. Defaults preserve the owner's latest proxy preset. | `output/nodes.txt` |
+| Direct TCP/TLS | Three consecutive TCP connections per IP; arithmetic mean of successes, failures divided by all three attempts, population standard deviation. Optional three TLS handshakes. Original pinned-IP HTTPS download probe. | TCP mean 200 ms, loss at most 20%, jitter at most 200 ms, download at least 3 Mbps. Independent TLS probes are off, matching the original saved preset; when enabled their mean limit is 300 ms. | `output/Nodes-TCP/nodes.txt` |
 
-[Open the cloud automation workflow](https://github.com/jachjkl/Noode-CG-ProxyBench/actions/workflows/proxybench.yml). A manual run from GitHub defaults to cloud discovery only. Starting optimization in the Windows application explicitly requests the complete local benchmark and publication workflow.
+Both presets use a 512 KiB download sample, at least 95% response-body completion, an 8-second I/O timeout and a 7-second body-time limit. Download timing begins after headers. All limits are configurable with Chinese help and persist independently. A failed or above-limit measurement cannot qualify. Direct mode requires no proxy profile or application-owned proxy core; existing operating-system/VPN routes remain in effect.
 
-The desktop controller runs local measurements independently of GitHub Actions. Cloud discovery and final publication run on Ubuntu; no Windows Runner heartbeat owns the local benchmark. GitHub authentication comes from the owner's local `jachjkl` login. Public files use mirror downloads; authenticated operations use official GitHub endpoints with bounded retries and do not automatically adopt the local HTTP proxy. Each start checks for a running proxy client and a reachable local proxy listener, while preserving the current VPN and system routes. The public package contains no personal proxy credentials. The separately prepared owner-only package includes the real local profile at the owner's request and is never uploaded to GitHub Releases.
+Proxy mode uses one isolated, loopback-only Mihomo core in rule mode, with at most 100 independent candidate nodes per batch. It preserves the user's existing Clash, VPN, TUN and system proxy. Public Cloudflare trace is the default website probe because the legacy `cp.cloudflare.com` target can fail through EdgeTunnel. Adaptive concurrency reduces local congestion without changing thresholds. Full-pool TCP screening runs before expensive proxy requests, failed requests finish early when the configured loss limit becomes impossible, geography uses one successful provider during screening, and early competition begins after the saved quotas plus a retest margin are reached. Final competition rechecks geography and every saved quality rule.
 
-The compact Chinese dashboard shows five actual workflow steps: cloud acquisition, candidate download, local selection, final retest, and GitHub publication. Completed steps use the original package's stable completion colors, bottom fluorescence, and rising particles. The publication step completes only after cloud push succeeds. The candidate list and live benchmark occupy separate panes, each with independent 300-IP paging. A separate cloud panel displays the published total, ordinary count, Japanese count, and the exact original ranking. Detailed observations remain available in a dialog. Work starts after the user clicks the primary start button.
+Direct mode uses the original `core/tcp_scan.py`, `core/tls_check.py` and `core/speed_test.py` probes. TLS measurements include connection and handshake time. Edge location comes from the trace `colo` mapped to a bundled location table; trace `loc` identifies the requesting client and is not used as candidate geography. Unknown ordinary locations are `XX`; Japanese append entries require verified JP geography.
 
-## Discovery and replenishment
+## Configurable publication counts
 
-- Each application window has its own session identity. Starting after reopening the window fetches both complete feeds again for the new session.
-- Within one session, the two fixed feeds are fetched only once. Subsequent automatic replenishment or manual continuation requests a fresh 10,000-address official edge sample.
-- Cloud history excludes every previously handed-off IP, including untested candidates and optional-source candidates. No later round reintroduces an earlier candidate IP.
-- Downloaded candidates are accumulated locally before proxy validation. Failed validation does not discard the first complete pool when another handoff arrives.
-- Replenishment continues until 100 ordinary candidates and 10 additional Japanese exits pass final retesting, unless stopped or the sources are exhausted. `max_cycles: 0` enables this default behavior; a positive value sets an explicit limit.
-- Normal window closure clears transient candidate pools and checkpoints. Errors, unexpected interruption, and the explicit stop-and-save action preserve checkpoints. A newly opened window starts a new discovery session; resume explicitly restores an interrupted session. Continue fetching requests fresh candidates while retaining completed measurements and the current session's exclusion history. Five consecutive fetches, and later fetches in that same session, exclude all previously handed-off IPs.
+Each method separately saves the ordinary TOP count (1–1000) and additional Japanese count (0–300). Examples include 100, 200 or 300 ordinary entries. Defaults are proxy 100 + 10 and direct 300 + 10. Japanese entries receive a separate quota and obey the same measurement rules. There are no duplicate IPs across the two lanes of a published method.
 
-## Measurement and publication rules
+Before publication, current winners and the previous cloud list for that method undergo fresh competition tests. Results are ranked using current measurements, ordinary winners come first, and Japanese append winners follow. Rule changes restart final competition. Automatic publication requires the complete configured quotas; insufficient results trigger new candidates and preserve last-good output. Stop-and-save preserves completed results and checkpoints without pushing. Manual push retests only already measured candidates and may publish the actual qualified count up to the saved limits. A running manual request waits for the current batch. Pending uploads survive network errors and can be retried.
 
-Each batch loads at most 100 distinct proxies into one isolated Mihomo core. The core uses rule mode, loopback-only listeners, and no TUN interface. The application does not change the system proxy or terminate the user's existing Clash or Mihomo processes.
+Each output namespace contains `nodes.txt`, `nodes.json`, `nodes.csv`, `api.json`, `ip.zip`, and `health.json`. Text lines use `IP:port#COUNTRY`, for example `82.139.242.5:443#DE`. JSON persists matching ranks and measurement methods. Cloud decoding checks quotas, uniqueness, order, exact text/JSON consistency and the complete allowlisted file set before any writes. Publishing one method cannot overwrite the other.
 
-Google, Cloudflare, and GitHub each receive at least five unified-delay observations, with five as the default. Each site discards one highest and one lowest observation and averages the remaining samples; five observations retain the middle three. The final response value is the mean of the three site means. Its default limit is 300 ms, and zero failed requests are allowed by default. Entry TCP latency has its own strict 300 ms default limit and a 1.2-second connection timeout. Every saved threshold remains authoritative. Network speed follows the original local installation package: one 512 KiB sample through the selected candidate, at least 95% body completion, an 8-second I/O timeout, a 7-second body-time limit, and a default minimum of 3.01 Mbps. Timing begins after response headers. Up to four dedicated candidate listeners perform speed requests concurrently. All rules have Chinese explanations and persist across normal closure and restart.
+## Cloud discovery and publication
 
-Cloudflare uses `cp.cloudflare.com` first. If preflight fails there and succeeds at `www.cloudflare.com/cdn-cgi/trace`, the entire measurement run consistently uses the trace endpoint and records that choice.
+1. The application requests [the owner's GitHub workflow](https://github.com/jachjkl/Noode-CG-ProxyBench/actions/workflows/proxybench.yml).
+2. Ubuntu fetches both configured feeds in full once per open application session, plus 10,000 official Cloudflare candidates and available Japanese hints.
+3. Immutable handoffs are downloaded through multiple public mirrors and checked against a trusted SHA-256. Both local methods reuse this session's candidate pool.
+4. Windows measures locally. Later automatic replenishment or manual continuation requests 10,000 new edge addresses, excluding every earlier session address, including untested addresses. Fixed feeds are not fetched again during that session.
+5. Ubuntu validates the result blob and commits the selected output namespace. Successful completion is displayed only after cloud confirmation.
 
-The new ordinary TOP100 and all previously published ordinary TOP100 nodes compete in a fresh retest. New Japanese TOP10 candidates and the previous Japanese TOP10 are independently retested. Exactly 100 ordinary winners and 10 additional Japanese winners are retained. Japanese nodes receive a separate quota and must meet the same saved measurement rules, with verified Japanese exit geography. Failed retests revoke stale qualification. A rule edit before publication restarts final competition under the latest saved rules.
+Mirror downloads never carry GitHub or proxy credentials. Authenticated operations use official GitHub APIs with retries; ordinary download mirrors cannot receive GitHub writes. Local measurement continues independently of GitHub Runner heartbeat failures. Proxy mode checks local protocol updates and official core updates at start. Normal closure removes transient pools and checkpoints; explicit stop, errors and interruption preserve recovery state. Saved rules, profiles, tools, published files and Chinese logs remain. Reopening starts a new discovery session unless interrupted work is explicitly resumed.
 
-Publication requires exactly 100 ordinary nodes followed by 10 additional Japanese nodes, with 110 unique IPs. Every publication uses the same ranking policy and retested measurements. Insufficient results preserve the previous successful files and trigger replenishment.
-
-Outputs are stored in the repository's `output/` directory: `nodes.txt`, `nodes.json`, `nodes.csv`, `api.json`, `ip.zip`, and `health.json`. [The plain-text IP file](output/nodes.txt) uses one `IP:port#COUNTRY` per line, such as `82.139.242.5:443#DE`, with the Japanese append lane occupying the final ten lines. It starts empty before the first successful publication. Both local packaging and cloud decoding require the complete output set and verify that the text exactly matches the final ranked JSON; missing or inconsistent text cannot overwrite the last successful result.
-
-## Combined maintenance bundle
-
-Run `python scripts/build_delivery_bundle.py` for a public maintenance ZIP, or add `--personal` for the explicitly authorized local profile package. The result is created under this project's `dist/` directory. It combines the Windows EXE and ZIP, cloud source ZIP, directory listing, SHA-256 inventory, repair-workspace preparation script, rebuild script, and an explicit set of Python, wheel, GitHub CLI, and Mihomo build inputs. Runner registration and runtime measurements are excluded.
-
-After extraction, prepare the repair workspace, edit its source, and run the rebuild script. Existing source edits and local profiles are preserved. The embedded Python can rebuild an extracted source tree without requiring a Git checkout. Both cloud and Windows code packages contain these build recipes. Version numbers come from `core/proxybench/__init__.py`.
-
-The original rising background particles, card lighting, button ripples, and fluorescent selected-state animation are preserved in the Chinese Windows interface. Hidden or offscreen decorations pause, and reduced-motion preferences are respected.
-
-## Validation status
-
-Automated checks pass, including candidate paging, independent batch probes, checkpoint recovery, incumbent competition, failed-retest replacement, and continuous replenishment. Real cloud discovery produced 21,537 candidates in the first round and 10,000 new IPs in each of the next two rounds, with no overlap.
-
-Real authenticated proxy traffic has been exercised, including 100 independently loaded nodes and 900 site probes. Version 1.0.1 replaces the earlier three-transfer bandwidth gate with the original package's small-sample speed method. Core initialization checks node loading and rule routing; endpoint failures are handled per candidate during selection. A real 100+10 publication has not yet been verified. See [validation evidence and limitations](docs/VALIDATION.md).
-
-## Development
+## Build and repair
 
 ```powershell
 python -m pip install -r requirements-dev.txt
 python main.py validate
-python main.py validate-profile
-python main.py validate-runtime
 python main.py dashboard
-python main.py auto-cloud
-python main.py resume
-python -m unittest discover -s tests -v
+python main.py auto-cloud --measurement-mode tcp_tls
+python -X utf8 -m unittest discover -s tests -v
 python -m ruff check .
-python scripts/build_windows_package.py
-python scripts/build_windows_installer.py
+python scripts/build_delivery_bundle.py
 ```
 
-Cloud preparation uses `prepare-handoff`; downloaded pools are persisted with `stage-handoff`; the desktop controller executes the local pipeline. The publication workflow validates an allowlisted, SHA-256-verified public result blob before committing output. CI uses deterministic fixtures and does not substitute mocked measurements for real network acceptance.
+`--personal` builds the explicitly authorized private local-profile bundle. The maintenance ZIP in `dist/` combines Windows EXE/ZIP, cloud source ZIP, directory listing, SHA-256 inventory, repair-workspace preparation/rebuild scripts, and verified build caches. Extract and repair inside its workspace; embedded Python supports rebuilding without a Git checkout. A single `VERSION` in `core/proxybench/__init__.py` controls file names.
 
-Baseline: `jachjkl/Noode-CG` main commit `3bc8598b1b9e77cc38f7a54c9d75f5e3796fc058`. Recovery tag: `baseline-noode-cg-v13.6.2`. This project writes only to the independent `Noode-CG-ProxyBench` repository. The original repository's source and published outputs remain unchanged.
+## Verification
 
-The repository is public for source and candidate mirrors. Only the owner has repository write access; owner-authorized Actions publish generated data. Local profiles, controller secrets, runner registration, and private packages are excluded from public artifacts.
+Version 1.2.0 passes 319 deterministic tests and browser replay of both methods, custom saved quotas, all result tabs, independent 300-row paging, competition views, unified cloud rows, clipboard, Chinese logs and responsive layout. Real network checks are distinct from fixtures: the final optimized 100-candidate proxy batch passed 88 three-site/download checks in 126.45 seconds without geography or publication. A fresh mixed-source run excluded published addresses, screened 1,000 candidates in 5.67 seconds and qualified 15 of 100 tested candidates under strict 200 ms entry and response limits. A direct 100-candidate pipeline initially qualified 27 and retained 25 after competition. The 1.1.4 real proxy publication contains 110 addresses confirmed by cloud run [37791275236](https://github.com/jachjkl/Noode-CG-ProxyBench/actions/runs/37791275236). See [validation evidence](docs/VALIDATION.md) for limitations and subsequent publication evidence.
 
-## Documentation
+Baseline: original `jachjkl/Noode-CG` commit `3bc8598b1b9e77cc38f7a54c9d75f5e3796fc058`, recovery tag `baseline-noode-cg-v13.6.2`. Development and generated writes target only this independent repository. The public repository permits owner-only write access and owner-authorized Actions output.
+
+## Development documentation
 
 - [Architecture](docs/ARCHITECTURE-PROXYBENCH.md)
-- [Candidate sources](docs/CANDIDATE-SOURCES.md)
-- [Mihomo lifecycle](docs/MIHOMO.md)
-- [Proxy profiles](docs/PROXY-PROFILE.md)
-- [Benchmark methodology](docs/BENCHMARK-METHODOLOGY.md)
-- [Japanese append selection](docs/JP-SELECTION.md)
-- [Recovery and checkpoints](docs/RECOVERY.md)
-- [Windows packaging](docs/WINDOWS-PACKAGE.md)
-- [Project and maintenance structure](docs/PROJECT-STRUCTURE.md)
-- [Validation evidence](docs/VALIDATION.md)
-
-## EdgeTunnel fast-selection notes
-
-Entry TCP timing and unified proxy website response timing are separate observations. Version 1.1.3 enforces both saved latency limits strictly and uses per-site trimmed means from at least five observations. Both fixed feeds remain complete; non-Cloudflare entries are labeled reverse-proxy candidates rather than official Cloudflare edges. Entry-only results cannot qualify for publication.
-
-The pinned upstream [cmliu/edgetunnel source](https://github.com/cmliu/edgetunnel/blob/af4f9837e1843e34159018713bc8749ccec3004d/_worker.js) treats `speed.cloudflare.com` and `cp.cloudflare.com` as special local-response domains in some paths. Worker [TCP restrictions](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/) also block direct outgoing sockets to Cloudflare ranges. The speed probe therefore uses a bounded 512 KiB HTTP range from Google's download service, through the candidate proxy, retaining body timing and route evidence. It does not accept a local 204 as a bandwidth result.
-
-The Windows EXE creates its `Noode-CG-ProxyBench` runtime folder next to the EXE. `--install-adjacent` exercises the same location without opening a window; explicit `--install-only PATH` remains available for packaging checks.
-
-
-## Runtime synchronization and updates
-
-Cloud dispatch uses a unique request identifier in the workflow title, independent of the Windows clock. Temporary monitoring failures retry without terminating the owned runner. The dashboard checks ownership of a live local core, so a child that outlives its monitor remains visible and cannot trigger a duplicate start. Local phase information advances the five-step display even when cloud job metadata is delayed.
-
-Each operation checks the official stable Mihomo release and downloads a verified update when necessary. The actual active local Clash configuration is checked at startup and periodically between batches. Changed protocol parameters synchronize locally, archive prior measurements, and restart measurement of the saved pool under the new fingerprint. Fixed-source session history remains intact; different configurations never compete using mixed old measurements.
-
-Version 1.1.4 adds a manual publication button and separate optimization/software timers. Stop-and-save only stops measurements and saves the checkpoint; it does not publish. Manual publication retests existing measurements without fetching new IPs. During a scan it is queued until the current batch finishes. It publishes the actual qualified selection, capped at 100 ordinary records plus ten additional verified Japanese exits, even when fewer are available; automatic publication still requires the complete 100+10 quota. Japanese append candidates are reserved before the ordinary shortlist to avoid consuming their separate quota. Failed uploads retain the exact pending archive for retry. Active optimization time excludes pauses, resumes from saved timing, freezes on completion, and resets on a new start. Software lifetime continues while the window is open. Defaults match the owner's latest saved 17-rule preset; individually saved choices always take precedence.
-
-The candidate pane always shows the complete paginated pool. The live/completed/published buttons switch the right pane only; the selected button uses the same green gradient, bottom light, and rising particles as completed workflow steps.
+- [Measurement methodology](docs/BENCHMARK-METHODOLOGY.md)
+- [Japanese quota](docs/JP-SELECTION.md)
+- [Sources](docs/CANDIDATE-SOURCES.md), [profiles](docs/PROXY-PROFILE.md), [Mihomo](docs/MIHOMO.md)
+- [Deployment](docs/DEPLOYMENT.md), [recovery](docs/RECOVERY.md)
+- [Windows packages](docs/WINDOWS-PACKAGE.md), [project structure](docs/PROJECT-STRUCTURE.md)
+- [Interface design](docs/UI-DESIGN.md), [validation](docs/VALIDATION.md)

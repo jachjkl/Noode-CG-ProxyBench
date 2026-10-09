@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 def sources(repository: str, ref: str, relative_path: str = "data/handoff/cloud-raw10000.json.gz") -> list[str]:
-    if relative_path not in {"data/handoff/cloud-raw10000.json.gz", "data/handoff/proxybench-pool.json.gz", "output/nodes.json"}:
+    if relative_path not in {"data/handoff/cloud-raw10000.json.gz", "data/handoff/proxybench-pool.json.gz", "output/nodes.json", "output/Nodes-TCP/nodes.json"}:
         raise ValueError("交接路径不在白名单")
     raw = f"https://raw.githubusercontent.com/{repository}/{ref}/{relative_path}"
     return [f"https://ghfast.top/{raw}", f"https://gh.ddlc.top/{raw}",

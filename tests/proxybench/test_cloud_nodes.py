@@ -34,7 +34,7 @@ class CloudNodesTests(unittest.TestCase):
             self.assertFalse(any("uuid" in row or "password" in row for row in rows))
 
     def test_empty_cloud_placeholder_displays_zero_without_invented_nodes(self):
-        client = Mock()
+        client = Mock(settings={})
         client.command.side_effect = ["a" * 40, CloudError("missing nodes.json"), {"size": 0}]
         report = read_published(client)
         self.assertEqual(report["total"], 0)

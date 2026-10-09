@@ -13,6 +13,8 @@ from pathlib import Path
 
 from core.io_utils import atomic_write_bytes, atomic_write_json, atomic_write_text
 
+from .modes import validate_limits
+
 PUBLIC_FIELDS = {"ip", "port", "rank", "lane", "jp_hint", "geo_country", "geo_verified", "geo_conflict",
                  "entry_latency_ms", "entry_connected", "entry_preferred", "entry_method", "proxy_probe_count",
                  "google_rounds_ms", "google_average_ms", "cloudflare_rounds_ms", "cloudflare_average_ms",
@@ -22,6 +24,9 @@ PUBLIC_FIELDS = {"ip", "port", "rank", "lane", "jp_hint", "geo_country", "geo_ve
                  "site_success_count", "latency_jitter_ms", "latency_variance", "qualified", "rules", "latency_method",
                  "google_retained_ms", "google_discarded_ms", "cloudflare_retained_ms", "cloudflare_discarded_ms",
                  "github_retained_ms", "github_discarded_ms", "entry_passed", "latency_passed"}
+PUBLIC_FIELDS.update({"measurement_mode", "tcp_rounds_ms", "tcp_average_latency_ms", "tcp_loss_percent", "tcp_jitter_ms", "tcp_success_count",
+                      "tls_rounds_ms", "tls_average_latency_ms", "tls_jitter_ms", "tls_loss_percent", "tls_enabled", "tls_passed",
+                      "download_mbps", "download_measurement", "colo", "city", "geo_method", "latency_targets", "probe_method"})
 ARTIFACTS = ("nodes.txt", "nodes.json", "nodes.csv", "api.json", "ip.zip")
 TRANSACTION_FILES = (*ARTIFACTS, "health.json")
 
@@ -38,10 +43,12 @@ def nodes_text(records: list[dict]) -> str:
     return "\n".join(lines) + ("\n" if lines else "")
 
 
-def gate(records: list[dict], *, allow_partial: bool = False) -> bool:
+def gate(records: list[dict], *, allow_partial: bool = False, limits: dict | None = None) -> bool:
+    limits = validate_limits(limits)
     general = sum(item.get("lane") == "general" for item in records)
     japan = sum(item.get("lane") == "jp_append" for item in records)
-    counts = 0 < len(records) <= 110 and general <= 100 and japan <= 10 if allow_partial else general == 100 and japan == 10
+    counts = (0 < len(records) <= sum(limits.values()) and general <= limits["general"] and japan <= limits["japan"]
+              if allow_partial else general == limits["general"] and japan == limits["japan"])
     return (counts and len(records) == general + japan and len({item["ip"] for item in records}) == len(records)
             and all(item.get("qualified") for item in records)
             and [item.get("lane") for item in records] == ["general"] * general + ["jp_append"] * japan
@@ -50,9 +57,10 @@ def gate(records: list[dict], *, allow_partial: bool = False) -> bool:
 
 def publish(root: Path, records: list[dict], health: dict) -> dict:
     root.mkdir(parents=True, exist_ok=True)
-    passed = gate(records, allow_partial=health.get("manual_publication") is True)
+    limits = validate_limits(health.get("publication_limits"))
+    passed = gate(records, allow_partial=health.get("manual_publication") is True, limits=limits)
     report = {**health, "publish_gate_passed": passed, "published": passed, "needs_more": not passed,
-              "quota_complete": gate(records),
+              "quota_complete": gate(records, limits=limits), "publication_limits": limits,
               "general_final_count": sum(item.get("lane") == "general" for item in records),
               "jp_final_count": sum(item.get("lane") == "jp_append" for item in records),
               "unique_final_count": len({item["ip"] for item in records})}

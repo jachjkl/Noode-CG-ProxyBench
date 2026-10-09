@@ -1,3 +1,3 @@
 """Isolated, real proxy-environment benchmark. Legacy direct probes are not used."""
 
-VERSION = "1.1.4"
+VERSION = "1.2.0"

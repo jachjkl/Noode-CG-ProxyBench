@@ -5,7 +5,7 @@ import os
 import subprocess
 from pathlib import Path
 
-SOURCE_OUTPUTS = {"output/README.md", "output/nodes.txt"}
+SOURCE_OUTPUTS = {"output/README.md", "output/nodes.txt", "output/Nodes-TCP/README.md", "output/Nodes-TCP/nodes.txt"}
 EXCLUDED_ROOTS = {"data", "runtime", "dist", "dashboard-cache", "logs"}
 EXCLUDED_PARTS = {".git", "__pycache__", ".pytest_cache", ".ruff_cache", "node_modules"}
 

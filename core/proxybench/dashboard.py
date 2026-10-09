@@ -11,8 +11,10 @@ import time
 from core.io_utils import atomic_write_json
 
 from .benchmark import limit_failure
+from .events import EventLog
 from .execution import cli_python
 from .mihomo_manager import owned_core_running
+from .modes import mode_settings
 from .profile import ProxyProfile, discover_profiles, import_discovered, save_import
 from .run_clock import RunClock
 from .settings import current_rules, load_settings, validate_rules
@@ -20,12 +22,14 @@ from .workflow import progress
 
 
 class BenchDashboard:
-    def __init__(self, legacy_state) -> None:
+    def __init__(self, legacy_state, *, mode="proxy", session_id=None) -> None:
         self.legacy = legacy_state
         self.legacy.proxybench = self
         self.root = legacy_state.root
         self.app = self.root / "app" if (self.root / "app/config.yaml").exists() else self.root
-        self.settings = load_settings(self.app / "config.yaml")
+        self.settings = mode_settings(load_settings(self.app / "config.yaml"), mode)
+        self.direct = mode == "tcp_tls"
+        self.events = EventLog(self.app, mode)
         self.opened_at = time.monotonic()
         self.clock = RunClock(self.settings["state_dir"] / "run-timing.json")
         self.process = None
@@ -45,7 +49,7 @@ class BenchDashboard:
             atomic_write_json(self.settings["state_dir"] / "cloud-live.json", {**prior_cloud, "status": "Stopped", "interrupted": True, "stage": message})
         if (self.settings["state_dir"] / "batch-state.json").exists() and prior.get("status") in {"Running", "Paused", "Stopped", "Failed"}:
             self.preserve_on_close = True
-        atomic_write_json(self.settings["state_dir"] / "session.json", {"session_id": secrets.token_hex(16)})
+        atomic_write_json(self.settings["state_dir"] / "session.json", {"session_id": session_id or secrets.token_hex(16)})
 
     def refresh_cloud(self) -> None:
         if self.closing:
@@ -91,7 +95,8 @@ class BenchDashboard:
         settings = self.settings
         live = self.read_cached(settings["state_dir"] / "live.json", default={})
         cloud = self.read_cached(self.app / "data/handoff/proxybench-cloud-health.json", default={})
-        same_pool = bool(live.get("sources", {}).get("seed") and live["sources"]["seed"] == cloud.get("seed"))
+        same_pool = bool(live.get("sources", {}).get("seed") and live["sources"]["seed"] == cloud.get("seed") or
+                         live.get("session_id") and live.get("session_id") == cloud.get("session_id"))
         measured = dict(self.read_cached(settings["state_dir"] / "benchmark-results.json.gz", compressed=True, default={})) if same_pool or not cloud else {}
         partial = self.read_cached(settings["state_dir"] / "partial-batch.json", default={})
         if partial.get("run_id") and partial.get("run_id") == live.get("run_id") and partial.get("phase") == live.get("phase"):
@@ -103,11 +108,19 @@ class BenchDashboard:
         for key, row in measured.items():
             if row.get("qualified") and (failure := limit_failure(row, saved_rules)):
                 measured[key] = {**row, "qualified": False, "status": failure}
-        if kind == "published-results":
+        if kind == "competition-results":
+            from .state import Store
+            state = Store(settings["state_dir"]).load()
+            rows = [*state.get("general_results", {}).values(), *state.get("jp_results", {}).values()]
+            if live.get("phase") in {"general_retest", "jp_retest"}:
+                staged = {f"{row['ip']}:{row['port']}": row for row in rows}
+                staged.update({f"{row['ip']}:{row['port']}": row for row in active_rows})
+                rows = list(staged.values())
+        elif kind == "published-results":
             rows = self.read_cached(settings["output_dir"] / "nodes.json", default=[])
         elif kind == "live-results":
             active_keys = {f"{row['ip']}:{row['port']}" for row in active_rows}
-            rows = [row for row in measured.values() if row.get("probes") or row.get("proxy_probe_count")]
+            rows = [row for row in measured.values() if row.get("probes") or row.get("proxy_probe_count") or row.get("tcp_rounds_ms")]
             rows.sort(key=lambda row: (f"{row['ip']}:{row['port']}" in active_keys, row.get("tested_at", "")), reverse=True)
         elif kind == "results":
             rows = [row for row in measured.values() if row.get("tested_at") and row.get("status") != "Rejected Entry"]
@@ -163,6 +176,8 @@ class BenchDashboard:
             profile = ProxyProfile.load(settings["profile"]).summary()
         except ValueError:
             profile = {"configured": False}
+        if self.direct:
+            profile = {"configured": True, "protocol": "direct", "port": 443}
         health_path = settings["output_dir"] / "health.json"
         health = json.loads(health_path.read_text(encoding="utf-8")) if health_path.exists() else {}
         health["last_good_count"] = len(self.read_cached(settings["output_dir"] / "nodes.json", default=[]))
@@ -204,16 +219,20 @@ class BenchDashboard:
             if action == "refresh-cloud-results":
                 self.refresh_cloud()
                 return {"requested": "refresh-cloud-results"}
+            if action == "log-events":
+                return {"rows": self.events.tail()}
             if action == "cloud-published-results":
                 nodes = self.cloud_published.get("nodes", [])
-                allowed = {"ip", "port", "rank", "lane", "geo_country", "country", "entry_latency_ms", "proxy_average_latency_ms", "proxy_download_average_mbps"}
+                allowed = {"ip", "port", "rank", "lane", "geo_country", "country", "entry_latency_ms", "proxy_average_latency_ms", "proxy_download_average_mbps",
+                           "proxy_loss_percent", "latency_jitter_ms", "measurement_mode", "tcp_average_latency_ms", "tcp_loss_percent", "tcp_jitter_ms", "tls_average_latency_ms", "download_mbps", "city"}
                 return {"rows": [{key: value for key, value in row.items() if key in allowed} for row in nodes], "total": len(nodes)}
             running = bool(self.process and self.process.poll() is None) or owned_core_running(settings["runtime_dir"])
             if action == "resume-testing":
                 return self.action("resume-paused" if running else "resume", {})
             if action == "rules":
-                rules = validate_rules({**current_rules(settings), **payload})
+                rules = validate_rules({**current_rules(settings), **payload}, settings.get("measurement_mode", "proxy"))
                 atomic_write_json(settings["rules_path"], rules)
+                self.events.append(f"规则已保存：常规发布前 {rules['publish_count']} 个，日本追加 {rules['jp_publish_count']} 个")
                 return {"saved": True, "rules": rules, "effective": "已保存到本机，下一批生效；再次打开也使用这些规则" if running else "已保存到本机，立即生效；再次打开也使用这些规则"}
             if action in {"pause", "stop", "resume-paused"}:
                 if action == "stop" and not self.closing:
@@ -227,9 +246,10 @@ class BenchDashboard:
                     atomic_write_json(path, {"action": action})
                     if action == "pause":
                         self.clock.stop()
+                self.events.append({"stop": "用户停止并保存：保留已测结果和断点，不自动推送", "pause": "用户暂停了测试", "resume-paused": "用户继续测试"}[action])
                 return {"requested": action}
             if action == "publish":
-                pending = (self.app / "runtime/pending-publish/manifest.json").exists()
+                pending = (self.app / "runtime" / ("pending-publish-tcp" if self.direct else "pending-publish") / "manifest.json").exists()
                 if not running and not pending and not (settings["state_dir"] / "batch-state.json").exists() and not (settings["output_dir"] / "nodes.json").exists():
                     raise ValueError("没有可推送的已测结果，请先开始优选")
                 atomic_write_json(settings["state_dir"] / "publish-request.json", {"requested": True})
@@ -266,11 +286,13 @@ class BenchDashboard:
                 if action in {"start", "auto-start", "resume", "continue-fetch"}:
                     self.preserve_on_close = False
                     (settings["state_dir"] / "publish-request.json").unlink(missing_ok=True)
-                if action != "auto-start":
+                if action != "auto-start" and not self.direct:
                     ProxyProfile.load(settings["profile"])
                 command = "validate-runtime" if action == "validate" else "auto-cloud"
                 mode = {"continue-fetch": "continue", "resume": "resume", "publish": "publish"}.get(action)
                 arguments = ["--mode", mode] if mode else []
+                if command == "auto-cloud" and self.direct:
+                    arguments.extend(["--measurement-mode", "tcp_tls"])
                 atomic_write_json(settings["state_dir"] / "cloud-live.json", {"repository": self.legacy.repository,
                                   "mode": action,
                                   "status": "Preparing", "stage": "检查规则代理内核" if action == "validate" else "正在准备云端任务和规则代理"})
@@ -289,7 +311,7 @@ class BenchDashboard:
                         "message": "正在复测并推送已有合格结果；本次不获取新 IP" if action == "publish" else "任务已启动，获取与实测结果会自动更新"}
             if action == "cloud-start":
                 return self.action("auto-start", {})
-            if action in {"results", "live-results", "candidates", "published-results"}:
+            if action in {"results", "live-results", "candidates", "published-results", "competition-results"}:
                 return self.rows(action, int(payload.get("page", int(payload.get("offset", 0)) // 300 + 1)))
             raise ValueError("未知操作")
 
@@ -315,7 +337,7 @@ class BenchDashboard:
             return False
         app = self.app.resolve()
         state = self.settings["state_dir"].resolve()
-        if app not in state.parents or state.name != "proxy-bench":
+        if app not in state.parents or state.name not in {"proxy-bench", "tcp-bench"}:
             raise ValueError("缓存目录不属于当前软件，未清理")
         if state.exists():
             for path in state.iterdir():

@@ -32,6 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--auto-start", action="store_true")
     automatic = subparsers.add_parser("auto-cloud", help="自动匹配代理、启动独立执行器、云端发现、本地实测和云端发布")
     automatic.add_argument("--mode", choices=["auto", "resume", "continue", "publish"], default="auto")
+    automatic.add_argument("--measurement-mode", choices=["proxy", "tcp_tls"], default="proxy")
     server = subparsers.add_parser("serve", help="启动只读 HTTP API")
     server.add_argument("--host", default="127.0.0.1")
     server.add_argument("--port", type=int, default=8080)
@@ -60,6 +61,9 @@ def main(argv: list[str] | None = None) -> int:
             serve(args.host, args.port, resolve_path(config, config["paths"]["output"]))
             return 0
         settings = load_settings(args.config)
+        if getattr(args, "measurement_mode", "proxy") == "tcp_tls":
+            from core.proxybench.modes import mode_settings
+            settings = mode_settings(settings, "tcp_tls")
         if command == "validate-profile":
             print(json.dumps(ProxyProfile.load(settings["profile"]).summary(), ensure_ascii=False))
             return 0

@@ -68,7 +68,7 @@ internal static class ProxyBenchSetup
         Directory.CreateDirectory(destination);
         string prefix = destination.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         // Refuse overwriting an application that owns an active cloud or Mihomo run.
-        foreach (string relative in new string[] { "app/runtime/cloud/run.lock", "app/runtime/mihomo/run.lock" })
+        foreach (string relative in new string[] { "app/runtime/cloud/run.lock", "app/runtime/mihomo/run.lock", "app/runtime/tcp-bench/run.lock" })
         {
             string marker = Path.Combine(destination, relative.Replace('/', Path.DirectorySeparatorChar));
             if (!File.Exists(marker)) continue;

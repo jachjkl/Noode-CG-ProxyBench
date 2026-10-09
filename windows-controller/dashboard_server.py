@@ -1468,8 +1468,8 @@ def make_handler(state: DashboardState, server_ref: dict[str, ThreadingHTTPServe
         if bench is None:
             app = state.root / "app" if (state.root / "app/config.yaml").exists() else state.root
             sys.path.insert(0, str(app))
-            from core.proxybench.dashboard import BenchDashboard
-            bench = BenchDashboard(state)
+            from core.proxybench.multi_dashboard import MultiModeDashboard
+            bench = MultiModeDashboard(state)
             bench.refresh_cloud()
         return bench
 
@@ -1500,7 +1500,8 @@ def make_handler(state: DashboardState, server_ref: dict[str, ThreadingHTTPServe
             route = request.path
             if route == "/api/proxybench/state":
                 try:
-                    self._json(proxybench().snapshot())
+                    mode = parse_qs(request.query).get("measurement_mode", [None])[0]
+                    self._json(proxybench().snapshot(mode=mode) if mode else proxybench().snapshot())
                 except (ValueError, OSError):
                     self._json({"error": "无法读取 ProxyBench 配置"}, HTTPStatus.BAD_REQUEST)
                 return
@@ -1744,8 +1745,8 @@ def serve(
     if auto_start:
         app = state.root / "app" if (state.root / "app/config.yaml").exists() else state.root
         sys.path.insert(0, str(app))
-        from core.proxybench.dashboard import BenchDashboard
-        auto_bench = BenchDashboard(state)
+        from core.proxybench.multi_dashboard import MultiModeDashboard
+        auto_bench = MultiModeDashboard(state)
         auto_bench.action("auto-start", {})
     print("Noode-CG ProxyBench 真实代理优选窗口")
     print(f"浏览器地址：{url}")
