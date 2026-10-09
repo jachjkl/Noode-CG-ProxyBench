@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import concurrent.futures
 import copy
 import gzip
 import json
@@ -18,16 +17,15 @@ from sources.pool import build
 
 from .benchmark import Benchmark, limit_failure, ranking_key
 from .controller import CoreError
-from .entry_probe import probe as entry_probe
 from .events import EventLog, chinese
 from .export import publish, recover
 from .mihomo_manager import MihomoManager
 from .modes import OUTPUTS, publication_limits
 from .profile import ProfileChanged, ProxyProfile, refresh_existing, safe_error
-from .settings import current_rules
+from .settings import BATCH_SIZE, current_rules
 from .state import Control, RunLock, Stopped, Store
 
-PROXY_POLICY = "entry-proxy-v10-nonblocking-observation"
+PROXY_POLICY = "proxy-v11-all-candidates"
 
 
 def prepare(settings: dict, continuation: bool = False, session_id: str = "", reuse: bool = False) -> dict:
@@ -69,11 +67,12 @@ class Pipeline:
     def __init__(self, settings: dict, manager=None, pool_builder=build) -> None:
         self.settings = settings
         self.direct = settings.get("measurement_mode") == "tcp_tls"
-        self.policy = ("direct-exclusive-v3-nonblocking-" + ("tls" if current_rules(settings)["tls_enabled"] else "tcp")) if self.direct else PROXY_POLICY
+        self.policy = ("direct-exclusive-v4-all-candidates-" + ("tls" if current_rules(settings)["tls_enabled"] else "tcp")) if self.direct else PROXY_POLICY
         self.store = Store(settings["state_dir"])
         if self.direct and manager is None:
             from .direct_benchmark import DirectManager
             manager = DirectManager()
+            manager.updater = MihomoManager(settings["root"] / "runtime/mihomo")
         self.manager = manager or MihomoManager(settings["runtime_dir"])
         self.pool_builder = pool_builder
         self.control = Control(settings["state_dir"], self.update)
@@ -99,57 +98,40 @@ class Pipeline:
     def flush_update(self) -> None:
         self.status["mihomo"] = self.manager.health()
         state = self.store.state
-        self.status.update(candidate_total=len(state.get("pool", [])), tested_count=len(state.get("results", {})),
+        self.status.update(candidate_total=len(state.get("pool", [])), tested_count=self.tested_count(),
                            run_id=state.get("run_id"), session_id=state.get("session_id"),
                            workflow_run_id=self.settings.get("workflow_run_id", os.environ.get("GITHUB_RUN_ID", "")),
                            qualified_count=sum(x.get("qualified", False) for x in state.get("results", {}).values()),
                            phase=state.get("phase", ""), cycle=state.get("cycle", 1), sources=state.get("sources", {}),
-                           entry_screened_count=len(state.get("entry_results", {})),
-                           proxy_tested_count=sum(bool(row.get("proxy_probe_count")) for row in state.get("results", {}).values()),
+                           proxy_tested_count=0 if self.direct else self.tested_count(),
                            measurement_mode=self.settings.get("measurement_mode", "proxy"))
         try:
             atomic_write_json(self.settings["state_dir"] / "live.json", self.status)
         except OSError:
             pass  # UI is best effort; checkpoint commits remain strict.
 
-    def screen_candidates(self, candidates: list[dict], *, result_field="results", refresh=False) -> list[dict]:
-        if self.direct:
-            # Match the reference: finish each 100-IP group end to end before
-            # opening more sockets. TLS selection has no separate TCP gate.
-            return sorted(candidates, key=lambda row: (not row.get("jp_hint", False), row.get("source_priority", 999)))
-        if not self.settings.get("fast_entry_screen"):
-            return candidates
-        rules = current_rules(self.settings)
-        self.store.state.setdefault(result_field, {}).update(self.store.partial)
-        screens = self.store.state.setdefault("entry_results", {})
-        remaining = candidates if refresh else [row for row in candidates if f"{row['ip']}:{row['port']}" not in screens]
-        with concurrent.futures.ThreadPoolExecutor(max_workers=rules["entry_concurrency"]) as executor:
-            for offset in range(0, len(remaining), rules["entry_concurrency"]):
-                self.control.checkpoint()
-                if result_field == "results" and self.control.publication_requested():
-                    self.store.commit()
-                    return []
-                self.update(stage="快速初筛候选入口端口", status="Running")
-                futures = {executor.submit(entry_probe, row, rules["entry_timeout_seconds"]): row for row in remaining[offset:offset + rules["entry_concurrency"]]}
-                for future in concurrent.futures.as_completed(futures):
-                    row = futures[future]
-                    screens[f"{row['ip']}:{row['port']}"] = future.result()
-                self.store.commit()
-                self.update(stage="快速初筛候选入口端口")
-        survivors = []
-        from datetime import UTC, datetime
-        for row in candidates:
-            key = f"{row['ip']}:{row['port']}"
-            result = screens[key]
-            row.update(result)
-            if result["entry_connected"] and result["entry_latency_ms"] <= rules["max_entry_latency_ms"]:
-                row["entry_preferred"] = True
-                survivors.append(row)
-            else:
-                self.store.state[result_field][key] = {**row, "key": key, "qualified": False, "status": "Rejected Entry",
-                                                  "proxy_probe_count": 0, "tested_at": datetime.now(UTC).isoformat()}
-        self.store.commit()
-        return sorted(survivors, key=lambda row: (not row.get("jp_hint", False), not row["entry_preferred"], row["entry_latency_ms"], row["ip"]))
+    def tested_count(self) -> int:
+        state = self.store.state
+        return len(set(state.get("processed", {}).get("results", {})) | set(state.get("results", {})))
+
+    def compact_batch(self, field: str) -> None:
+        """Keep passes and address-only outcomes, never failed probe bodies."""
+        state = self.store.state
+        processed = state.setdefault("processed", {}).setdefault(field, {})
+        for key, row in list(state.get(field, {}).items()):
+            processed[key] = bool(row.get("qualified"))
+            if field != "results" and key in state.get("results", {}):
+                if row.get("qualified"):
+                    state["results"][key] = copy.deepcopy(row)
+                else:
+                    state["results"].pop(key, None)
+                    state.setdefault("processed", {}).setdefault("results", {})[key] = False
+            if not row.get("qualified"):
+                del state[field][key]
+
+    def ordered_candidates(self, candidates: list[dict]) -> list[dict]:
+        # Ordering only: every acquired address enters the selected measurement.
+        return [self.candidate(row) for row in sorted(candidates, key=lambda row: (not row.get("jp_hint", False), row.get("source_priority", 999)))]
 
     def profiles(self, pool: list[dict], default: ProxyProfile) -> dict:
         if self.direct:
@@ -167,11 +149,14 @@ class Pipeline:
 
     def scan(self, candidates: list[dict], result_field: str, profiles: dict, *, fixed_rules: dict | None = None) -> None:
         state = self.store.state
+        had_partial = bool(self.store.partial)
         state.setdefault(result_field, {}).update(self.store.partial)
-        if fixed_rules is not None and (self.direct or self.settings.get("fast_entry_screen")):
-            candidates = self.screen_candidates(candidates, result_field=result_field, refresh=True)
-        remaining = [item for item in candidates if f"{item['ip']}:{item['port']}" not in state[result_field]]
-        batch_number = 0
+        self.compact_batch(result_field)
+        if had_partial:
+            self.store.commit()
+        processed = state["processed"][result_field]
+        remaining = [item for item in candidates if f"{item['ip']}:{item['port']}" not in processed]
+        batch_number = (len(candidates) - len(remaining)) // BATCH_SIZE
         while remaining:
             self.control.checkpoint()
             if result_field == "results" and self.control.publication_requested():
@@ -183,14 +168,14 @@ class Pipeline:
                 if refreshed["changed"]:
                     raise ProfileChanged
             rules = fixed_rules or current_rules(self.settings)
-            batch = remaining[:rules["batch_size"]]
-            remaining = remaining[rules["batch_size"]:]
+            batch = remaining[:BATCH_SIZE]
+            remaining = remaining[BATCH_SIZE:]
             batch_number += 1
-            self.update(batch_current=batch_number, batch_total=math.ceil(len(candidates) / rules["batch_size"]),
-                        batch_completed=len(state[result_field]) // rules["batch_size"], stage=("TLS Testing" if rules["tls_enabled"] else "TCP Testing") if self.direct else "Loading Proxy", active_rules=rules)
+            self.update(batch_current=batch_number, batch_total=math.ceil(len(candidates) / BATCH_SIZE),
+                        batch_completed=batch_number - 1, stage=("TLS Testing" if rules["tls_enabled"] else "TCP Testing") if self.direct else "Loading Proxy", active_rules=rules)
             for attempt in range(3):
                 try:
-                    batch = [item for item in batch if f"{item['ip']}:{item['port']}" not in state[result_field]]
+                    batch = [item for item in batch if f"{item['ip']}:{item['port']}" not in processed]
                     if not batch:
                         break
                     benchmark = None if self.direct else Benchmark(self.manager, rules, self.control, geo_urls=self.settings["geo_urls"], update=self.update,
@@ -199,6 +184,7 @@ class Pipeline:
                         with self.update_lock:
                             state[result_field][result["key"]] = result
                             self.store.save_partial(result)
+                            processed[result["key"]] = bool(result.get("qualified"))
                             reason = result.get("rejection_reason", "")
                             self.events.append(f"{result['key']}：{chinese(result.get('status', ''))}" + (f"；{reason}" if reason else ""), level="info" if result.get("qualified") else "warning")
                     if self.direct:
@@ -217,17 +203,12 @@ class Pipeline:
                     self.update(stage="代理内核连接异常，重启本软件内核并继续未完成的候选")
                     if attempt == 2:
                         raise
+            self.compact_batch(result_field)
             self.store.commit()
-            self.update(batch_completed=batch_number)
-            if result_field == "results" and rules.get("quick_finish") and self.targets_ready(rules):
-                self.events.append("已达到所设数量并留出复测余量，开始发布前竞赛；未测试候选保留，可继续优选")
-                break
-
-    def targets_ready(self, rules: dict) -> bool:
-        limits = publication_limits(rules)
-        winners = [r for r in self.store.state.get("results", {}).values() if r.get("qualified") and not limit_failure(r, rules)]
-        japan = sum(bool(r.get("jp_qualified")) for r in winners)
-        return len(winners) >= math.ceil(limits["general"] * 1.25) + limits["japan"] and japan >= math.ceil(limits["japan"] * 1.25)
+            if not self.direct and hasattr(self.manager, "clear_batch"):
+                self.manager.clear_batch()
+            self.update(batch_completed=batch_number, candidates=[], speed_active=[])
+            self.events.append(f"第 {batch_number} 批已完成：保留合格结果，失败详情与临时缓存已清理；累计实测 {self.tested_count()} 个 IP")
 
     def new_pool(self, profile: ProxyProfile, handoff: bool) -> tuple[list[dict], dict]:
         if handoff:
@@ -293,7 +274,8 @@ class Pipeline:
                     raise ValueError("Profile 已更改，不能混用旧测量；请开始新一轮")
                 atomic_write_bytes(self.settings["state_dir"] / f"previous-profile-{secrets.token_hex(4)}-results.json.gz",
                                    gzip.compress(json.dumps(state.get("results", {})).encode(), mtime=0))
-                state.update(results={}, general_results={}, jp_results={}, entry_results={}, phase="scan", profile_fingerprint=profile.fingerprint)
+                state.update(results={}, general_results={}, jp_results={}, processed={}, phase="scan", profile_fingerprint=profile.fingerprint)
+                state.pop("entry_results", None)
                 for item in [*state.get("pool", []), *state.get("previous_general", []), *state.get("previous_jp", [])]:
                     if "authorized_proxy_candidate" not in item.get("source_types", []):
                         item["port"] = profile.port
@@ -305,7 +287,8 @@ class Pipeline:
                 if state.get("results"):
                     atomic_write_bytes(self.settings["state_dir"] / f"previous-policy-{secrets.token_hex(4)}-results.json.gz",
                                        gzip.compress(json.dumps(state["results"]).encode(), mtime=0))
-                state.update(results={}, general_results={}, jp_results={}, entry_results={}, phase="scan", measurement_policy=self.policy)
+                state.update(results={}, general_results={}, jp_results={}, processed={}, phase="scan", measurement_policy=self.policy)
+                state.pop("entry_results", None)
                 self.events.append("旧测速策略的结果已归档；候选和会话保留，按新方法重新测量")
                 self.store.partial = {}
             self.control.path.unlink(missing_ok=True)
@@ -329,6 +312,7 @@ class Pipeline:
                         if field != "results":
                             self.refresh_retests(field)
                 state.update(phase="general_retest", competition_rules=current_rules(self.settings), general_results={}, jp_results={})
+                self.reset_retest_progress()
                 seeds = state.pop("manual_retest_seeds", [])
                 from .session_lifecycle import read_saved
                 seeds.extend(read_saved(self.settings))
@@ -345,7 +329,11 @@ class Pipeline:
                 self.store.commit()
             try:
                 self.update(stage="准备免代理 TCP／TLS 测试引擎" if self.direct else "检查代理环境与内核更新", status="Running")
-                self.manager.ensure(self.settings["auto_update"])
+                self.manager.ensure(True)
+                updater = self.manager.updater if self.direct and hasattr(self.manager, "updater") else self.manager
+                update_status = getattr(updater, "update_status", "")
+                if isinstance(update_status, str) and update_status:
+                    self.events.append(update_status)
                 validation_path = self.settings["runtime_dir"] / "validation.json"
                 validation = json.loads(validation_path.read_text(encoding="utf-8")) if validation_path.exists() else {}
                 if validation.get("profile_fingerprint") == profile.fingerprint and "/cdn-cgi/trace" in validation.get("cloudflare_url", ""):
@@ -369,6 +357,7 @@ class Pipeline:
                     state["pool"].extend(item for item in fresh if item["ip"] not in previous)
                     state.update(phase="scan", cycle=source_report.get("cycle", state["cycle"] + 1), sources=source_report,
                                  general_results={}, jp_results={})
+                    self.reset_retest_progress()
                     if self.incumbents:
                         state.update(previous_general=self.incumbent_candidates(profile, "general"),
                                      previous_jp=self.incumbent_candidates(profile, "jp_append"))
@@ -376,7 +365,7 @@ class Pipeline:
                 while True:
                     profiles = self.profiles(state["pool"], profile)
                     if state["phase"] == "scan":
-                        candidates = self.screen_candidates(state["pool"])
+                        candidates = self.ordered_candidates(state["pool"])
                         self.scan(candidates, "results", profiles)
                         state["phase"] = "general_retest"
                         state["competition_rules"] = current_rules(self.settings)
@@ -399,11 +388,7 @@ class Pipeline:
                     if state["phase"] == "jp_retest":
                         jp_pool = self.competition_candidates([x for x in qualified if x.get("jp_qualified") and x["ip"] not in general_ips][:limits["japan"]], state.get("previous_jp", [])[:limits["japan"]])
                         jp_pool = [x for x in jp_pool if x["ip"] not in general_ips]
-                        for offset in range(0, len(jp_pool), 20):
-                            self.scan(jp_pool[offset:offset + 20], "jp_results", profiles, fixed_rules=state["competition_rules"])
-                            jp_passed = [x for x in state.get("jp_results", {}).values() if x.get("qualified") and x.get("jp_qualified")]
-                            if len(self.unique_ips(jp_passed)) >= limits["japan"]:
-                                break
+                        self.scan(jp_pool, "jp_results", profiles, fixed_rules=state["competition_rules"])
                         state["phase"] = "publish"
                         self.refresh_retests("jp_results")
                         self.store.commit()
@@ -412,6 +397,7 @@ class Pipeline:
                     latest = current_rules(self.settings)
                     if latest != state["competition_rules"]:
                         state.update(phase="general_retest", competition_rules=latest, general_results={}, jp_results={})
+                        self.reset_retest_progress()
                         self.store.commit()
                         self.update(stage="规则已更新，按保存的新规则重新复测", status="Running")
                         continue
@@ -420,17 +406,17 @@ class Pipeline:
                     report = {**state["sources"], "status": "ok" if len(final) == sum(limits.values()) else "partial" if manual and final else "needs_more",
                               "publication_limits": limits, "measurement_mode": self.settings.get("measurement_mode", "proxy"),
                               "manual_publication": manual,
-                              "candidate_total": len(state["pool"]), "tested_count": len(state["results"]),
+                              "candidate_total": len(state["pool"]), "tested_count": self.tested_count(),
                               "qualified_count": len(qualified), "jp_qualified_count": sum(x.get("jp_qualified", False) for x in qualified),
-                              "mihomo_version": self.manager.version, "batch_total": math.ceil(len(state["pool"]) / 100),
-                              "batch_completed": math.ceil(len(state["results"]) / 100), "run_id": state["run_id"],
+                              "mihomo_version": self.manager.version, "batch_total": math.ceil(len(state["pool"]) / BATCH_SIZE),
+                              "batch_completed": math.ceil(self.tested_count() / BATCH_SIZE), "run_id": state["run_id"],
                               "cycle": state["cycle"], "session_id": state["session_id"],
                               "previous_general_competitors": len(state.get("previous_general", []))}
                     result = publish(self.settings["output_dir"], final, report)
                     atomic_write_bytes(self.settings["root"] / "data/handoff/proxybench-attempted.json.gz",
                                        gzip.compress(json.dumps(sorted({x["ip"] for x in state["pool"]})).encode(), mtime=0))
                     if manual or result["published"] or (self.settings["max_cycles"] and state["cycle"] >= self.settings["max_cycles"]) or handoff:
-                        state["phase"] = "scan" if manual and len(state["results"]) < len(state["pool"]) else "completed" if result["published"] else "needs_more"
+                        state["phase"] = "scan" if manual and self.tested_count() < len(state["pool"]) else "completed" if result["published"] else "needs_more"
                         self.store.commit()
                         self.update(status="Stopped" if manual else state["phase"], stage="手动复测完成，正在准备推送" if manual else state["phase"],
                                     publication_phase="publish" if manual else "", candidates=[])
@@ -440,6 +426,7 @@ class Pipeline:
                     previous = {item["ip"] for item in state["pool"]}
                     state["pool"].extend(item for item in fresh if item["ip"] not in previous)
                     state.update(cycle=state["cycle"] + 1, phase="scan", sources=source_report, general_results={}, jp_results={})
+                    self.reset_retest_progress()
                     self.store.commit()
             except ProfileChanged:
                 self.store.commit()
@@ -474,6 +461,11 @@ class Pipeline:
             if key in self.store.state["results"]:
                 self.store.state["results"][key] = copy.deepcopy(result)
 
+    def reset_retest_progress(self) -> None:
+        processed = self.store.state.setdefault("processed", {})
+        processed.pop("general_results", None)
+        processed.pop("jp_results", None)
+
     def incumbent_candidates(self, profile: ProxyProfile, lane: str) -> list[dict]:
         limits = publication_limits(current_rules(self.settings))
         limit = limits["general"] if lane == "general" else limits["japan"]
@@ -505,7 +497,7 @@ class Pipeline:
 
         from sources.cloudflare_official import collect
         self.update(stage="准备规则代理内核检查", status="Running")
-        pool, networks = collect(100, profile.port, secrets.token_hex(16), set(ips))
+        pool, networks = collect(BATCH_SIZE, profile.port, secrets.token_hex(16), set(ips))
         ips = [ip for ip in ips if any(ipaddress.IPv4Address(ip) in network for network in networks)]
         ips = list(dict.fromkeys([*ips, *(item["ip"] for item in pool)]))
         rules = current_rules(self.settings)
@@ -516,8 +508,8 @@ class Pipeline:
         with RunLock(self.settings["runtime_dir"]):
             self.control.path.unlink(missing_ok=True)
             try:
-                self.manager.ensure(self.settings["auto_update"])
-                for count in (1, 10, 100):
+                self.manager.ensure(True)
+                for count in (1, 10, BATCH_SIZE):
                     self.control.checkpoint()
                     candidates = [{"ip": ip, "port": profile.port, "proxy_name": f"PB-{index:06d}",
                                    "source_names": ["local-profile-validation"], "source_types": ["cloudflare_edge_candidate"],

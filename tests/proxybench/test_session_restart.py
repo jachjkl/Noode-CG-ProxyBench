@@ -144,7 +144,8 @@ class SessionRestartTests(unittest.TestCase):
             dashboard.action('stop',{})
             dashboard.request_close()
             self.assertTrue(dashboard.finish_close(True))
-            with patch('core.proxybench.direct_benchmark.tcp_probe',return_value=90), \
+            with patch('core.proxybench.mihomo_manager.MihomoManager.ensure'), \
+                 patch('core.proxybench.direct_benchmark.tcp_probe',return_value=90), \
                  patch('core.proxybench.direct_benchmark.test_speed',side_effect=speed), \
                  patch('core.proxybench.direct_benchmark._request',return_value=(200,{},b'colo=FRA\n',10)):
                 report=Pipeline(dashboard.settings,pool_builder=Mock(side_effect=AssertionError('manual publish must not fetch new IPs'))).run(publish_only=True)

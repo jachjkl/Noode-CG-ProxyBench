@@ -50,8 +50,10 @@ def build(personal: bool = False) -> Path:
             package.extractall(dependencies)
     core = app / "runtime/mihomo"
     core.mkdir(parents=True, exist_ok=True)
-    for name in ("mihomo.exe", "version.json"):
-        shutil.copy2(ROOT / "runtime/mihomo" / name, core / name)
+    for name in ("mihomo.exe", "version.json", "mihomo.previous", "previous-version.json"):
+        source = ROOT / "runtime/mihomo" / name
+        if source.exists():
+            shutil.copy2(source, core / name)
     gh_zip = next((ROOT / "runtime").glob("gh_*_windows_amd64.zip"))
     release = json.loads((ROOT / "runtime/gh-release.json").read_text(encoding="utf-8"))
     asset = next(x for x in release["assets"] if x["name"] == gh_zip.name)
@@ -82,16 +84,16 @@ shell.Run command, 0, False
     (distribution / "Start-ProxyBench.vbs").write_text(vbs, encoding="utf-16")
     (distribution / "开始自动优选.cmd").write_text('@echo off\r\nstart "" wscript.exe "%~dp0Start-ProxyBench.vbs"\r\n', encoding="ascii")
     instructions = """EXE 将软件目录解压到自身旁边；ZIP 可解压到任意本地目录，双击【开始自动优选.vbs】。不会固定解压到桌面。
-已内置 Mihomo、Python、GitHub CLI。点击【开始优选】，自动读取代理、检查内核更新，云端获取 IP，通过多镜像下载后在本机独立测速。
-默认规则采用当前保存的设置：入口上限 300 毫秒，三站平均上限 300 毫秒，每站 5 次，去掉一次最高和最低后取中间三次平均，三站均值再平均。请求失败率 0%，网速至少 3.01 Mbps。
+已内置 Mihomo、Python、GitHub CLI。每次打开与开始测试前检查官方内核更新；点击测试引擎打开版本下拉框，最多保留当前版和上一版，可回退。直连仅检查更新，不启动代理测速。点击【开始优选】，自动读取代理、检查内核更新，云端获取 IP，通过多镜像下载后在本机独立测速。
+默认规则采用当前保存的设置：三站平均上限 300 毫秒，无入口初筛；每批 300 个全部进入所选实测，测完保留合格 IP、删除失败详情与临时缓存，再测下一批。每站 5 次，去掉一次最高和最低后取中间三次平均，三站均值再平均。请求失败率 0%，网速至少 3.01 Mbps。
 网速沿用原安装包：一次 512 KiB 样本，至少 95% 正文完成，I/O 超时 8 秒，正文计时上限 7 秒。所有规则均有中文解释，保存后再次打开继续使用。
 两个固定来源每次打开只获取一次全量 IP；自动补充和继续获取均获取 10000 个本窗口未获取过的边缘 IP。
-顶部选择【代理三网站测速】或【TCP／TLS（免代理）】。免代理方式沿用原包，连续三次 TCP，TLS 可开关，丢包、抖动、平均延迟与下载速度均按规则淘汰；两种方式分别保存规则。
+顶部选择【代理三网】【TCPing 直连】或【TLS 直连】。TCPing 和 TLS 二选一，所选方法连续测三次，丢包、抖动、平均延迟与下载速度均按规则淘汰；两种方式分别保存规则。
 规则中自定义常规 IP 和日本追加数量，例如 100、200、300；日本可设为 0。代理输出 output/nodes.txt，TCPing／TLS 共用输出 output/Npdex-Tcp/Tls.txt，均为 IP:端口#国家代码。
-【停止并保存】只停止并保留已测结果与断点，不自动推送。【手动推送】复测已有结果并按实际合格数量推送，不获取新 IP；运行中点击会在当前批次完成后执行，最多取规则中设置的数量。自动优选补足所设名额后发布。
+【停止并保存】只停止并保留合格实测结果，不自动推送；正常关闭后清除断点，下次全量获取。【手动推送】复测已有结果并按实际合格数量推送，不获取新 IP；运行中点击会在当前批次完成后执行，最多取规则中设置的数量。自动优选补足所设名额后发布。
 运行计时器显示优选累计时间和软件打开时长；暂停不计入优选时间，恢复时继续计时，重新开始会清零。推送失败保留待发布包，手动推送可重传。
 左右列表独立分页，每页 300 个 IP，云端结果显示实际数量和原推送排名。步骤完成保留底部荧光与上升粒子效果。
-正常关闭清除候选缓存；异常中断、报错或主动停止保存保留断点。真实代理参数只保存在本机。实时中文日志保存在 logs 文件夹，关闭后仍保留。
+正常关闭（包括停止并保存后关闭）清除候选缓存和断点；仅异常中断、报错或测试失败保留断点。真实代理参数只保存在本机。实时中文日志保存在 logs 文件夹，关闭后仍保留。
 """
     instructions += "这是含本机代理配置的专用包，请仅保存在自己的电脑。\n" if personal else "公开包不含个人代理配置，可自动读取本机配置。\n"
     (distribution / "运行说明.txt").write_text(instructions, encoding="utf-8")
@@ -101,7 +103,7 @@ shell.Run command, 0, False
             if not path.is_file():
                 continue
             relative = path.relative_to(distribution).as_posix()
-            app_runtime = {"app/runtime/mihomo/mihomo.exe", "app/runtime/mihomo/version.json", "app/runtime/gh/bin/gh.exe", "app/runtime/curl/curl.exe"}
+            app_runtime = {"app/runtime/mihomo/mihomo.exe", "app/runtime/mihomo/version.json", "app/runtime/mihomo/mihomo.previous", "app/runtime/mihomo/previous-version.json", "app/runtime/gh/bin/gh.exe", "app/runtime/curl/curl.exe"}
             if relative.startswith("app/") and relative[4:] not in tracked and relative not in app_runtime:
                 continue  # A previous staging build must not reintroduce removed code or runtime state.
             # Rebuilding after a local test must never ship imported credentials or Runner registration files.

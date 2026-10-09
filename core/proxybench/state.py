@@ -93,6 +93,7 @@ class Store:
             atomic_write_bytes(self.root / f"{name}.json.gz", content)
         qualified = [x for x in results.values() if x.get("qualified")]
         atomic_write_bytes(self.root / "qualified.json.gz", gzip.compress(json.dumps(qualified, ensure_ascii=False).encode(), compresslevel=1, mtime=0))
+        atomic_write_bytes(self.root / "processed.json.gz", gzip.compress(json.dumps(self.state.get("processed", {}).get("results", {})).encode(), compresslevel=1, mtime=0))
         # Retain current and previous generations; every target is a fixed child of the state root.
         for old in self.root.glob("generation-*.json.gz"):
             if old.name < f"generation-{max(0, self.generation - 2):08d}.json.gz":

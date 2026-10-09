@@ -48,7 +48,8 @@ class MihomoLifecycleTests(unittest.TestCase):
             with patch("core.proxybench.mihomo_manager.platform.machine", return_value="AMD64"), \
                  patch("core.proxybench.mihomo_manager.download", side_effect=[json.dumps(release).encode(), content]), \
                  patch.object(manager, "read_version", return_value="old-version"), patch.object(manager, "start", side_effect=CoreError("health failed")) as start:
-                manager.ensure()
+                with self.assertRaises(CoreError):
+                    manager.ensure()
                 start.assert_called_once()
             self.assertEqual(manager.binary.read_bytes(), b"old-core")
             self.assertEqual(manager.version, "old-version")

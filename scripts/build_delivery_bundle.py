@@ -23,6 +23,7 @@ def build_inputs(root: Path) -> list[Path]:
     required = [runtime / "python-3.12.10-embed-amd64.zip", runtime / "gh-release.json",
                 runtime / "mihomo/mihomo.exe", runtime / "mihomo/version.json"]
     required.extend(runtime.glob("gh_*_windows_amd64.zip"))
+    required.extend(path for path in (runtime / "mihomo/mihomo.previous", runtime / "mihomo/previous-version.json") if path.exists())
     required.extend(path for path in (runtime / "wheels").glob("*.whl")
                     if path.name.lower().startswith(("pyyaml-", "psutil-")))
     wheels = [path.name.lower() for path in required if path.suffix == ".whl"]

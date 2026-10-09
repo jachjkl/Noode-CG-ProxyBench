@@ -93,7 +93,8 @@ internal static class ProxyBenchSetup
                 string packagePath = entry.FullName.Substring(slash + 1);
                 bool savedFile = relative.Contains(".local.") ||
                     packagePath.StartsWith("app/data/", StringComparison.OrdinalIgnoreCase) ||
-                    packagePath.StartsWith("app/output/", StringComparison.OrdinalIgnoreCase);
+                    packagePath.StartsWith("app/output/", StringComparison.OrdinalIgnoreCase) ||
+                    packagePath.StartsWith("app/runtime/mihomo/", StringComparison.OrdinalIgnoreCase);
                 if (!(savedFile && File.Exists(target)))
                 {
                     string temporary = target + ".install-new";
@@ -110,6 +111,10 @@ internal static class ProxyBenchSetup
                 progress(++index * 100 / archive.Entries.Count);
             }
         }
+        string retired = Path.GetFullPath(Path.Combine(destination, "app/core/proxybench/entry_probe.py"));
+        if (!retired.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Invalid retired component path");
+        if (File.Exists(retired)) File.Delete(retired);
         progress(100);
     }
 

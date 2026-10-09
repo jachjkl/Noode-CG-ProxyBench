@@ -55,9 +55,11 @@ class DirectManager:
 
     def __init__(self):
         self.loaded = 0
+        self.updater = None
 
     def ensure(self, _auto_update=False):
-        pass
+        if self.updater is not None:
+            self.updater.ensure(True, validate_start=False)
 
     def health(self):
         return {"version": self.version, "mode": "direct", "status": "Healthy", "loaded_proxies": 0, "controller_healthy": False}
@@ -119,13 +121,6 @@ class DirectBenchmark:
                                            f"上限 {self.rules[f'max_{probe}_average_latency_ms']:g} 毫秒／"
                                            f"{self.rules['max_loss_percent']:g}%／{self.rules['max_jitter_ms']:g} 毫秒")
         return record
-
-    async def screen(self, candidates: list[dict], completed) -> list[dict]:
-        async def worker(row):
-            record = await self.latency(row)
-            completed(record)
-            return record
-        return await run_worker_pool(candidates, worker, min(100, self.rules[f"{self.probe}_concurrency"]))
 
     def batch(self, candidates: list[dict], completed, *, reuse_tcp=False) -> list[dict]:
         with Observation(self.update, completed) as observer:

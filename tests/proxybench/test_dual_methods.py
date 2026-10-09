@@ -230,7 +230,8 @@ class DualMethodTests(unittest.TestCase):
             builder = Mock(return_value=(candidates, {"seed": "fixture", "session_id": "fixture"}))
             tcp = AsyncMock(return_value=90)
             tls = AsyncMock(return_value=(180, "TLSv1.3", "cipher"))
-            with patch("core.proxybench.pipeline.ProxyProfile.load", side_effect=AssertionError("direct mode must not load authentication")), \
+            with patch("core.proxybench.mihomo_manager.MihomoManager.ensure"), \
+                 patch("core.proxybench.pipeline.ProxyProfile.load", side_effect=AssertionError("direct mode must not load authentication")), \
                  patch("core.proxybench.direct_benchmark.tcp_probe", tcp), \
                  patch("core.proxybench.direct_benchmark.tls_probe", tls), \
                  patch("core.proxybench.direct_benchmark.test_speed", side_effect=speed), \

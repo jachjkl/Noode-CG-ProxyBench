@@ -36,7 +36,7 @@ class ManualPublishTimerTests(unittest.TestCase):
             manager.controller.delay = lambda *args: manager.controller.calls.append(args) or {"success": True, "latency_ms": 90}
             node = pool(3)[0]
             pipeline = Pipeline(settings, manager=manager)
-            pipeline.store.state = {"run_id": "old", "session_id": "old", "cycle": 1, "phase": "scan", "sources": {}, "pool": pool(3),
+            pipeline.store.state = {"run_id": "old", "session_id": "old", "cycle": 1, "phase": "scan", "sources": {}, "pool": pool(301),
                                     "profile_fingerprint": ProxyProfile.load(settings["profile"]).fingerprint,
                                     "measurement_policy": "entry-proxy-v7-trace",
                                     "results": {"104.16.0.1:443": {**node, "qualified": True, "proxy_average_latency_ms": 90}}}
@@ -78,7 +78,7 @@ class ManualPublishTimerTests(unittest.TestCase):
             (root / "config.yaml").write_text("proxybench: {}", encoding="utf-8")
             actual = current_rules(load_settings(root / "config.yaml"))
             self.assertEqual(actual, RULES)
-            self.assertEqual((actual["max_entry_latency_ms"], actual["max_proxy_average_latency_ms"], actual["min_proxy_speed_mbps"], actual["round_count"]), (300, 300, 3.01, 5))
+            self.assertEqual((actual["max_proxy_average_latency_ms"], actual["min_proxy_speed_mbps"], actual["round_count"], actual["batch_size"]), (300, 3.01, 5, 300))
 
     def test_stop_saves_without_queuing_publication_or_starting_a_process(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -121,15 +121,15 @@ class ManualPublishTimerTests(unittest.TestCase):
             manager = FakeManager()
             manager.health = lambda: {"status": "Stopped"}
             pipeline = Pipeline(settings, manager=manager)
-            pipeline.store.state = {"run_id": "run", "phase": "scan", "pool": pool(3), "results": {}}
+            pipeline.store.state = {"run_id": "run", "phase": "scan", "pool": pool(301), "results": {}}
             original = pipeline.store.commit
             def queue_after_batch():
                 original()
                 atomic_write_json(root / "publish-request.json", {"requested": True})
             pipeline.store.commit = queue_after_batch
-            pipeline.scan(pool(3), "results", {"default": object()})
-            self.assertEqual(len(pipeline.store.state["results"]), 1)
-            self.assertEqual(len(pipeline.store.state["pool"]), 3)
+            pipeline.scan(pool(301), "results", {"default": object()})
+            self.assertEqual(len(pipeline.store.state["results"]), 290)
+            self.assertEqual(len(pipeline.store.state["pool"]), 301)
 
     def test_manual_partial_results_cross_cloud_channel_but_automatic_partial_output_cannot(self):
         records = [*winners()[:3], *winners()[100:102]]

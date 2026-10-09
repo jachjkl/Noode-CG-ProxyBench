@@ -6,6 +6,7 @@ import io
 import json
 import os
 import platform
+import re
 import secrets
 import shutil
 import socket
@@ -21,6 +22,7 @@ import yaml
 from core.io_utils import atomic_write_bytes, atomic_write_json, atomic_write_text
 
 from .controller import Controller, CoreError
+from .settings import BATCH_SIZE
 
 
 def free_port() -> int:
@@ -76,6 +78,59 @@ class MihomoManager:
         self.version = ""
         self.loaded = 0
         self.benchmark_active = False
+        self.update_status = ""
+
+    def version_catalog(self) -> dict:
+        def read(name):
+            path = self.root / name
+            return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        current = read("version.json").get("version", "")
+        previous = read("previous-version.json").get("version", "") if (self.root / "mihomo.previous").exists() else ""
+        choice = read("core-choice.json")
+        check = read("update-check.json")
+        return {"current": current, "previous": previous, "pinned": bool(choice.get("version")),
+                "update_required": bool(check.get("latest") and check["latest"] != current and not choice.get("version")),
+                "latest": check.get("latest", ""), "checked_at": check.get("checked_at", 0),
+                "message": check.get("message", ""),
+                "versions": [v for v in (current, previous) if v], "limit": 2}
+
+    def choose_version(self, version: str) -> dict:
+        if self.process is not None or self.benchmark_active or owned_core_running(self.root):
+            raise CoreError("请先停止测速，再切换内核版本")
+        catalog = self.version_catalog()
+        if version == "latest":
+            (self.root / "core-choice.json").unlink(missing_ok=True)
+            self.ensure(True, validate_start=False)
+            return self.version_catalog()
+        if version not in catalog["versions"]:
+            raise ValueError("只能选择本机保存的当前版或上一版内核")
+        if version == catalog["previous"]:
+            prior = self.root / "mihomo.previous"
+            old, selected = self.binary.read_bytes(), prior.read_bytes()
+            metadata = self.root / "version.json"
+            previous_meta = self.root / "previous-version.json"
+            old_meta, selected_meta = metadata.read_bytes(), previous_meta.read_bytes()
+            expected = json.loads(selected_meta).get("binary_sha256")
+            if not expected or hashlib.sha256(selected).hexdigest() != expected:
+                raise CoreError("上一版内核摘要不匹配，未切换")
+            try:
+                atomic_write_bytes(self.binary, selected)
+                os.chmod(self.binary, 0o700)
+                self.read_version()
+                atomic_write_bytes(prior, old)
+                atomic_write_bytes(metadata, selected_meta)
+                old_value = json.loads(old_meta)
+                old_value["binary_sha256"] = hashlib.sha256(old).hexdigest()
+                atomic_write_json(previous_meta, old_value)
+            except BaseException:
+                atomic_write_bytes(self.binary, old)
+                os.chmod(self.binary, 0o700)
+                atomic_write_bytes(prior, selected)
+                atomic_write_bytes(metadata, old_meta)
+                atomic_write_bytes(previous_meta, selected_meta)
+                raise
+        atomic_write_json(self.root / "core-choice.json", {"version": version})
+        return self.version_catalog()
 
     def cleanup_orphan(self) -> None:
         if not self.owner_path.exists():
@@ -105,20 +160,28 @@ class MihomoManager:
             if self.root in work.parents and work.name.startswith("session-"):
                 (work / "config.yaml").unlink(missing_ok=True)
 
-    def ensure(self, auto_update: bool = True) -> None:
-        if self.process is not None or self.benchmark_active:
+    def ensure(self, auto_update: bool = True, *, validate_start=True) -> None:
+        if self.process is not None or self.benchmark_active or owned_core_running(self.root):
             raise CoreError("测速过程中禁止更新 Core")
         self.cleanup_orphan()
         if self.binary.exists() and not auto_update:
             self.version = self.read_version()
             return
+        release = {}
         try:
             release = json.loads(download("https://api.github.com/repos/MetaCubeX/mihomo/releases/latest", 1024 * 1024))
             if release.get("draft") or release.get("prerelease"):
                 raise CoreError("拒绝非 Stable Core")
             metadata = self.root / "version.json"
+            atomic_write_json(self.root / "update-check.json", {"latest": release["tag_name"], "checked_at": time.time(), "message": "已检查官方稳定版"})
+            choice = self.root / "core-choice.json"
+            if self.binary.exists() and choice.exists() and json.loads(choice.read_text()).get("version") == self.version_catalog()["current"]:
+                self.version = self.read_version()
+                self.update_status = "已检查更新，保留手动选择的内核版本"
+                return
             if self.binary.exists() and metadata.exists() and json.loads(metadata.read_text()).get("version") == release["tag_name"]:
                 self.version = self.read_version()
+                self.update_status = "已检查更新，当前内核为最新稳定版"
                 return
             machine = platform.machine().lower()
             arch = "arm64" if machine in {"arm64", "aarch64"} else "amd64"
@@ -160,15 +223,20 @@ class MihomoManager:
             os.chmod(staged, 0o700)
             backup = self.root / "mihomo.backup"
             had_old = self.binary.exists()
+            old_metadata = json.loads(metadata.read_text()) if metadata.exists() else {}
             if had_old:
+                if not old_metadata.get("version"):
+                    match = re.search(r"v\d+\.\d+\.\d+", self.read_version())
+                    old_metadata["version"] = match.group() if match else "previous"
                 atomic_write_bytes(backup, self.binary.read_bytes())
                 os.chmod(backup, 0o700)
             os.replace(staged, self.binary)
             try:
                 self.read_version()
-                self.start([], None)
-                self.controller.call("/version")
-                self.stop()
+                if validate_start:
+                    self.start([], None)
+                    self.controller.call("/version")
+                    self.stop()
             except BaseException:
                 self.stop()
                 if had_old:
@@ -176,13 +244,23 @@ class MihomoManager:
                 else:
                     self.binary.unlink(missing_ok=True)
                 raise
-            atomic_write_json(metadata, {"version": release["tag_name"], "asset": preferred, "digest": digest})
-            backup.unlink(missing_ok=True)
+            if had_old:
+                old_metadata["binary_sha256"] = hashlib.sha256(backup.read_bytes()).hexdigest()
+                os.replace(backup, self.root / "mihomo.previous")
+                atomic_write_json(self.root / "previous-version.json", old_metadata)
+            atomic_write_json(metadata, {"version": release["tag_name"], "asset": preferred, "digest": digest, "binary_sha256": hashlib.sha256(executable).hexdigest()})
+            for archive_path in [*self.root.glob("mihomo-*.zip"), *self.root.glob("mihomo-*.gz")]:
+                archive_path.unlink(missing_ok=True)
             self.version = release["tag_name"]
+            self.update_status = "内核已更新；上一版已保留，可在版本菜单中回退"
         except Exception:
             if not self.binary.exists():
                 raise CoreError("无法安装官方 Stable Mihomo") from None
             self.version = self.read_version()
+            self.update_status = "更新检查或安装未完成，保留可用内核；下次运行重新检查"
+            atomic_write_json(self.root / "update-check.json", {"latest": release.get("tag_name", ""), "checked_at": time.time(), "message": self.update_status})
+            if self.version_catalog()["update_required"]:
+                raise CoreError("发现新内核但更新失败，已保留原版本；请重试更新或选择上一版后再测试") from None
 
     def read_version(self) -> str:
         result = subprocess.run([str(self.binary), "-v"], capture_output=True, timeout=10,
@@ -250,8 +328,8 @@ class MihomoManager:
         raise CoreError("Mihomo Health Check 超时")
 
     def load_batch(self, candidates: list[dict], profile) -> None:
-        if len(candidates) > 100:
-            raise CoreError("一个 Core 最多加载 100 个 Candidate")
+        if len(candidates) > BATCH_SIZE:
+            raise CoreError("一个内核每批最多加载 300 个候选")
         if self.process is None or self.process.poll() is not None:
             self.start(candidates, profile)
         else:
@@ -271,6 +349,16 @@ class MihomoManager:
                 pass
         return {"version": self.version, "status": "Healthy" if healthy else "Failed" if alive else "Stopped", "mode": "rule",
                 "loaded_proxies": self.loaded if alive else 0, "controller_healthy": healthy}
+
+    def clear_batch(self) -> None:
+        """Unload only this owned core's candidates and close its batch connections."""
+        if self.process is None or self.process.poll() is not None:
+            return
+        self.controller.call("/connections", "DELETE")
+        self.controller.call("/configs?force=true", "PUT", {"payload": yaml.safe_dump(self.config([], None))})
+        self.loaded = 0
+        if self.work is not None:
+            atomic_write_text(self.work / "config.yaml", yaml.safe_dump(self.config([], None)))
 
     def stop(self) -> None:
         owned = self.process is not None or self.work is not None

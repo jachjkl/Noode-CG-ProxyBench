@@ -19,7 +19,7 @@ def ranking_key(result: dict) -> tuple:
                 result.get(f"{probe}_jitter_ms", math.inf), -result.get("download_mbps", 0), result["ip"], result["port"])
     return (result.get("proxy_loss_percent", 100), -result.get("site_success_count", 0),
             result["proxy_average_latency_ms"] if result.get("proxy_average_latency_ms") is not None else math.inf, result.get("latency_jitter_ms", math.inf),
-            -result.get("proxy_download_average_mbps", 0), result.get("entry_latency_ms", math.inf), result["ip"], result["port"])
+            -result.get("proxy_download_average_mbps", 0), result["ip"], result["port"])
 
 
 def limit_failure(result: dict, rules: dict) -> str:
@@ -27,8 +27,6 @@ def limit_failure(result: dict, rules: dict) -> str:
     if result.get("measurement_mode") == "tcp_tls":
         from .direct_benchmark import direct_failure
         return direct_failure(result, rules)
-    if result.get("entry_latency_ms") is not None and result["entry_latency_ms"] > rules["max_entry_latency_ms"]:
-        return "Rejected Entry"
     if result.get("proxy_loss_percent") is not None and result["proxy_loss_percent"] > rules["max_proxy_loss_percent"]:
         return "Rejected Loss"
     if result.get("proxy_average_latency_ms") is not None and result["proxy_average_latency_ms"] > rules["max_proxy_average_latency_ms"]:
@@ -66,8 +64,7 @@ def calculate(result: dict, rules: dict) -> None:
     result["latency_jitter_ms"] = statistics.pstdev(averages)
     result["latency_variance"] = statistics.pvariance(averages)
     result["stability_score"] = 100 / (1 + result["latency_jitter_ms"])
-    result["entry_passed"] = (result.get("entry_latency_ms") is None or result["entry_latency_ms"] <= rules["max_entry_latency_ms"])
-    result["latency_passed"] = result["entry_passed"] and result["proxy_loss_percent"] <= rules["max_proxy_loss_percent"] and result["proxy_average_latency_ms"] <= rules["max_proxy_average_latency_ms"] and result["latency_jitter_ms"] <= rules.get("max_proxy_jitter_ms", 500)
+    result["latency_passed"] = result["proxy_loss_percent"] <= rules["max_proxy_loss_percent"] and result["proxy_average_latency_ms"] <= rules["max_proxy_average_latency_ms"] and result["latency_jitter_ms"] <= rules.get("max_proxy_jitter_ms", 500)
 
 
 class Benchmark:

@@ -38,7 +38,7 @@ class RecoveryPipelineTests(unittest.TestCase):
             pipeline.store.save_partial({"ip": "104.16.0.1", "port": 443, "key": "104.16.0.1:443", "qualified": False})
             pipeline.store.load()
             pipeline.scan(pool(10), "results", {"default": object()})
-            self.assertEqual(len(pipeline.store.state["results"]), 10)
+            self.assertEqual(len(pipeline.store.state["results"]), 9)
             self.assertNotIn("PB-000001", {name for name, _, _ in manager.controller.calls})
             self.assertEqual(len(manager.controller.calls), 135)
 
@@ -48,7 +48,7 @@ class RecoveryPipelineTests(unittest.TestCase):
             settings = self.settings(root)
             settings["rules"]["batch_size"] = 1
             pipeline = Pipeline(settings, manager=RecoveryManager())
-            pipeline.store.state = {"run_id": "two", "phase": "scan", "pool": pool(2), "results": {}}
+            pipeline.store.state = {"run_id": "two", "phase": "scan", "pool": pool(301), "results": {}}
             original_commit = pipeline.store.commit
             calls = []
             def edit_after_batch():
@@ -56,11 +56,12 @@ class RecoveryPipelineTests(unittest.TestCase):
                 calls.append(1)
                 settings["rules_path"].write_text(json.dumps({"max_proxy_average_latency_ms": 1}), encoding="utf-8")
             pipeline.store.commit = edit_after_batch
-            pipeline.scan(pool(2), "results", {"default": object()})
+            pipeline.scan(pool(301), "results", {"default": object()})
             results = list(pipeline.store.state["results"].values())
-            self.assertTrue(results[0]["qualified"])
-            self.assertFalse(results[1]["qualified"])
-            self.assertEqual(results[1]["status"], "Rejected Latency")
+            self.assertTrue(all(row["qualified"] for row in results))
+            self.assertNotIn("104.16.1.47:443", pipeline.store.state["results"])
+            self.assertEqual(pipeline.tested_count(), 301)
+            self.assertFalse(pipeline.store.state["processed"]["results"]["104.16.1.47:443"])
 
     def test_missing_profile_fails_before_core_or_source_calls(self):
         with tempfile.TemporaryDirectory() as directory:

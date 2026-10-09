@@ -62,9 +62,9 @@ class ExclusiveDirectTests(unittest.TestCase):
                 restored.action("choose-mode",{"mode":"tcp_tls","probe":"tcp"})
             self.assertEqual(current_rules(restored.controllers["tcp_tls"].settings)["tls_enabled"],1)
 
-    def test_first_hundred_finish_download_before_next_hundred_start_latency(self):
+    def test_first_three_hundred_finish_download_before_next_batch_start_latency(self):
         async def speed(nodes,options,**kwargs):
-            self.assertEqual(tcp.await_count,300 if len(completed)<100 else 600)
+            self.assertEqual(tcp.await_count,900 if len(completed)<300 else 1800)
             nodes[0].speed_mbps=12
             nodes[0].probe_results["speed"]={"completion_ratio":1}
             return nodes
@@ -74,7 +74,7 @@ class ExclusiveDirectTests(unittest.TestCase):
             settings=mode_settings(load_settings(root/"config.yaml"),"tcp_tls")
             settings["rules"].update(quick_finish=0)
             pipeline=Pipeline(settings)
-            pipeline.store.state={"run_id":"batch-fixture","phase":"scan","pool":pool(200),"results":{}}
+            pipeline.store.state={"run_id":"batch-fixture","phase":"scan","pool":pool(600),"results":{}}
             completed=[]
             tcp=AsyncMock(return_value=90)
             pipeline.events.append=lambda *_,**__:None
@@ -83,8 +83,8 @@ class ExclusiveDirectTests(unittest.TestCase):
                  patch("core.proxybench.direct_benchmark.tls_probe",AsyncMock()) as tls, \
                  patch("core.proxybench.direct_benchmark.test_speed",side_effect=speed), \
                  patch("core.proxybench.direct_benchmark._request",AsyncMock(return_value=(200,{},b"colo=FRA\n",1))):
-                pipeline.scan(pipeline.screen_candidates(pool(200)),"results",{})
+                pipeline.scan(pipeline.ordered_candidates(pool(600)),"results",{})
             tls.assert_not_awaited()
-            self.assertEqual(tcp.await_count,600)
-            self.assertEqual(len(completed),200)
+            self.assertEqual(tcp.await_count,1800)
+            self.assertEqual(len(completed),600)
             self.assertTrue(all(r["qualified"] for r in completed))

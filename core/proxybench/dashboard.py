@@ -173,8 +173,9 @@ class BenchDashboard:
                     row["status"] = live["status"]
         if kind == "candidates":
             # Keep full candidate data on disk; send only this page and its actual measurements.
+            processed = self.read_cached(settings["state_dir"] / "processed.json.gz", compressed=True, default={})
             visible = [{**row, **measured.get(f"{row['ip']}:{row['port']}", {}),
-                        "status": measured.get(f"{row['ip']}:{row['port']}", {}).get("status", "Queued")} for row in visible]
+                        "status": measured.get(f"{row['ip']}:{row['port']}", {}).get("status", "已淘汰，详情已清理" if processed.get(f"{row['ip']}:{row['port']}") is False else "Queued")} for row in visible]
         return {"rows": visible, "total": total, "page": page, "pages": pages, "page_size": 300}
 
     def snapshot(self) -> dict:

@@ -44,8 +44,13 @@ def save_measured(settings: dict) -> None:
         qualified = [row for row in rows.values() if row.get("qualified") and row.get("ip") and not limit_failure(row, rules)]
     except (OSError, ValueError, KeyError):
         return
-    if rows:
+    outcomes = {}
+    for field in ("results", "general_results", "jp_results"):
+        outcomes.update(state.get("processed", {}).get(field, {}))
+    if rows or outcomes:
         previous = {f"{r['ip']}:{r['port']}": r for r in read_saved(settings)}
+        for key in outcomes:
+            previous.pop(key, None)
         for row in rows.values():
             if row.get("ip") and row.get("port"):
                 previous.pop(f"{row['ip']}:{row['port']}", None)

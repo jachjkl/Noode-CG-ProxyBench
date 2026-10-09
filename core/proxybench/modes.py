@@ -17,7 +17,7 @@ def mode_settings(settings: dict, mode: str) -> dict:
     if mode == "tcp_tls":
         result.update(state_dir=root / "data/tcp-bench", runtime_dir=root / "runtime/tcp-bench",
                       rules_path=root / "data/tcpbench-rules.json", rules=validate_rules(TCP_RULES, mode),
-                      fast_entry_screen=True, auto_refresh_profile=False)
+                      auto_refresh_profile=False)
     return result
 
 

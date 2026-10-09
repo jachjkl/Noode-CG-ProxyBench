@@ -20,7 +20,7 @@ class SavedRulesTests(unittest.TestCase):
                      "delay_concurrency": 20, "speed_concurrency": 1, "max_entry_latency_ms": 200}
             path.write_text(json.dumps(saved))
             for _ in range(3):
-                self.assertEqual(current_rules({"rules_path": path, "rules": RULES}), saved)
+                self.assertEqual(current_rules({"rules_path": path, "rules": RULES}), {k:v for k,v in saved.items() if k != "max_entry_latency_ms"})
 
     def test_200_ms_boundary_passes_but_240_ms_average_never_reaches_speed_test(self):
         for latency, passes in ((200, True), (240, False)):
@@ -32,15 +32,15 @@ class SavedRulesTests(unittest.TestCase):
                 self.assertEqual(results[0]["qualified"], passes)
                 self.assertEqual(bool(manager.controller.speed_calls), passes)
 
-    def test_240_ms_entry_cannot_qualify_even_when_unified_response_is_fast(self):
+    def test_legacy_entry_delay_never_rejects_a_measured_proxy_pass(self):
         with tempfile.TemporaryDirectory() as directory:
             manager = FakeManager()
             candidates = [{**pool(1)[0], "entry_latency_ms": 240}]
             results = Benchmark(manager, {**RULES, "max_entry_latency_ms": 200, "round_cooldown_seconds": 0},
                                 Control(Path(directory)), geo_urls=[]).batch(candidates, object())
-            self.assertFalse(results[0]["qualified"])
-            self.assertFalse(results[0]["entry_passed"])
-            self.assertFalse(manager.controller.speed_calls)
+            self.assertTrue(results[0]["qualified"])
+            self.assertNotIn("entry_passed", results[0])
+            self.assertTrue(manager.controller.speed_calls)
 
     def test_save_close_reopen_keeps_every_rule_and_hidden_choices(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -54,7 +54,7 @@ class SavedRulesTests(unittest.TestCase):
             controller.request_close()
             self.assertTrue(controller.finish_close(normal=True))
             reopened = helper.controller(root)
-            self.assertEqual(reopened.snapshot()["rules"], {**original, "min_proxy_speed_mbps": 4})
+            self.assertEqual(reopened.snapshot()["rules"], {**{k:v for k,v in original.items() if k != "entry_concurrency"}, "min_proxy_speed_mbps": 4})
 
     def test_cached_240_ms_pass_is_revoked_in_live_table_and_count_under_200_ms_rule(self):
         with tempfile.TemporaryDirectory() as directory:

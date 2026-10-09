@@ -121,7 +121,7 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(result["proxy_average_latency_ms"], 105)
 
     def test_rules_reject_nan_unknown_and_unsafe_concurrency(self):
-        for invalid in ({"max_proxy_loss_percent": float("nan")}, {"batch_size": 101}, {"speed_concurrency": 9}, {"site_url": "https://x"}):
+        for invalid in ({"max_proxy_loss_percent": float("nan")}, {"batch_size": 301}, {"speed_concurrency": 9}, {"site_url": "https://x"}):
             with self.assertRaises(ValueError):
                 validate_rules(invalid)
 

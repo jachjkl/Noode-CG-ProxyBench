@@ -63,27 +63,17 @@ class FastSelectionTests(unittest.TestCase):
         self.assertIn("IN-NAME,proxybench-node-99,PB-000100", config["rules"])
         self.assertTrue(config["unified-delay"])
 
-    def test_screen_rejects_bad_entries_and_preserves_partial_proxy_results_on_resume(self):
+    def test_ordering_never_probes_or_drops_any_candidate_even_with_legacy_screen_flag(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             manager = FakeManager()
-            manager.health = lambda: {"status": "Stopped"}
-            settings = {"state_dir": root, "rules_path": root / "rules.json", "rules": {**RULES, "max_entry_latency_ms": 200}, "fast_entry_screen": True}
+            settings = {"state_dir": root, "rules_path": root / "rules.json", "rules": RULES, "fast_entry_screen": True}
             pipeline = Pipeline(settings, manager=manager)
-            pipeline.store.state = {"run_id": "resume", "phase": "scan", "pool": pool(4), "results": {}}
-            completed = {**pool(1)[0], "key": "104.16.0.1:443", "qualified": True}
-            pipeline.store.partial[completed["key"]] = completed
-            def screen(row, timeout):
-                if row["ip"] == "104.16.0.4":
-                    return {"entry_connected": False, "entry_latency_ms": None}
-                latency = {"104.16.0.1": 30, "104.16.0.2": 250, "104.16.0.3": 50}[row["ip"]]
-                return {"entry_connected": True, "entry_latency_ms": latency}
-            with patch("core.proxybench.pipeline.entry_probe", side_effect=screen):
-                survivors = pipeline.screen_candidates(pipeline.store.state["pool"])
-            self.assertEqual([row["ip"] for row in survivors], ["104.16.0.1", "104.16.0.3"])
-            self.assertEqual(pipeline.store.state["results"]["104.16.0.2:443"]["status"], "Rejected Entry")
-            self.assertEqual(pipeline.store.state["results"][completed["key"]], completed)
-            self.assertEqual(pipeline.store.state["results"]["104.16.0.4:443"]["status"], "Rejected Entry")
+            candidates = [{**row, "entry_connected": False, "entry_latency_ms": 9999} for row in pool(300)]
+            with patch("socket.create_connection", side_effect=AssertionError("no admission probe")):
+                ordered = pipeline.ordered_candidates(candidates)
+            self.assertEqual({row["ip"] for row in ordered}, {row["ip"] for row in candidates})
+            self.assertEqual(len(ordered), 300)
 
     def test_control_does_not_flush_large_dashboard_snapshot_for_every_checkpoint(self):
         with tempfile.TemporaryDirectory() as directory:

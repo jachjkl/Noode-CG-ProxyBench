@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from core.io_utils import atomic_write_json
 
 from .dashboard import BenchDashboard
-from .mihomo_manager import owned_core_running
+from .mihomo_manager import MihomoManager, owned_core_running
 from .modes import MODES, publication_limits
 from .session_lifecycle import clear_shared
 from .settings import current_rules
@@ -32,12 +32,39 @@ class MultiModeDashboard:
         if self.mode not in MODES:
             self.mode = "proxy"
         self.active_mode = None
+        self.core_manager = MihomoManager(self.app / "runtime/mihomo")
+        self.core_thread = None
+        self.core_checked = False
+        self.core_message = "每次打开检查内核更新，最多保留两个版本"
         legacy.proxybench = self
+
+    def refresh_core(self, version="latest", *, automatic=True):
+        if self.core_thread and self.core_thread.is_alive():
+            raise ValueError("内核正在更新，请稍候")
+        if self.active():
+            raise ValueError("请先停止测速，再更新或切换内核")
+        self.core_message = "正在检查内核更新，完成后可以开始测试" if automatic else "正在切换内核版本"
+        def check():
+            try:
+                if automatic:
+                    self.core_manager.ensure(True, validate_start=False)
+                else:
+                    self.core_manager.choose_version(version)
+                self.core_message = self.core_manager.update_status or "内核版本已就绪，最多保留当前版和上一版"
+                self.controllers["proxy"].events.append(self.core_message)
+            except Exception:
+                self.core_message = "内核更新或切换失败，原版本已保留；可重试更新"
+                self.controllers["proxy"].events.append(self.core_message, level="error")
+        self.core_thread = threading.Thread(target=check, daemon=True)
+        self.core_thread.start()
 
     def active(self):
         return next((mode for mode, child in self.controllers.items() if child.process and child.process.poll() is None or owned_core_running(child.settings["runtime_dir"])), None)
 
     def refresh_cloud(self):
+        if not self.core_checked and not self.active():
+            self.core_checked = True
+            self.refresh_core()
         for child in self.controllers.values():
             child.refresh_cloud()
 
@@ -46,6 +73,7 @@ class MultiModeDashboard:
         value = self.controllers[selected].snapshot()
         active = self.active()
         value.update(measurement_mode=selected, active_mode=active, global_running=active is not None,
+                     core_versions={**self.core_manager.version_catalog(), "busy": bool(self.core_thread and self.core_thread.is_alive()), "message": self.core_message},
                      modes={mode: {"title": title, "limits": publication_limits(current_rules(self.controllers[mode].settings)),
                                     "cloud": {k: v for k, v in self.controllers[mode].cloud_published.items() if k != "nodes"}}
                             for mode, title in MODES.items()})
@@ -56,6 +84,9 @@ class MultiModeDashboard:
             return self._action(action, dict(payload))
 
     def _action(self, action, payload):
+        if action == "core-version":
+            self.refresh_core(str(payload.get("version", "latest")), automatic=False)
+            return {"requested": action, "message": self.core_message}
         if action == "choose-mode":
             mode = payload.get("mode")
             if mode not in MODES:
@@ -77,6 +108,8 @@ class MultiModeDashboard:
         if mode not in MODES:
             raise ValueError("未知测速方式")
         active = self.active()
+        if action in {"start", "auto-start", "resume", "continue-fetch", "validate", "publish"} and self.core_thread and self.core_thread.is_alive():
+            raise ValueError("正在检查或更新内核，完成后再开始测试")
         if action in {"start", "auto-start", "resume", "continue-fetch", "validate"} and active:
             raise ValueError(f"{MODES[active]}正在运行，请先停止保存")
         if action in {"pause", "stop", "resume-testing", "resume-paused"} and active:
@@ -106,7 +139,7 @@ class MultiModeDashboard:
             child.request_close()
 
     def ready_to_close(self):
-        return all(child.ready_to_close() for child in self.controllers.values())
+        return not (self.core_thread and self.core_thread.is_alive()) and all(child.ready_to_close() for child in self.controllers.values())
 
     def finish_close(self, normal):
         results = [child.finish_close(normal, clear_shared_cache=False) for child in self.controllers.values()]
