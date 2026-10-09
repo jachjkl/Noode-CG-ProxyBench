@@ -130,6 +130,7 @@ class MihomoManager:
                 atomic_write_bytes(previous_meta, selected_meta)
                 raise
         atomic_write_json(self.root / "core-choice.json", {"version": version})
+        self.update_status = f"已选择内核 {version}；继续检查更新并保留此选择"
         return self.version_catalog()
 
     def cleanup_orphan(self) -> None:
