@@ -54,7 +54,7 @@ def assemble(destination: Path, *, windows: Path, installer: Path, source: Path,
 本地测速：core/proxybench/entry_probe.py、benchmark.py、direct_benchmark.py、controller.py、settings.py。顶部选择代理三网站、TCPing 直连或 TLS 直连（后两者二选一），常规与日本发布数量均在规则中分别保存。
 五步流程与完成动画：core/proxybench/workflow.py、cloud.py、dashboard.py，以及本地界面的 proxybench.js、proxybench.css。
 云端流程：.github/workflows/proxybench.yml、sources/、core/proxybench/pipeline.py。
-输出与推送：core/proxybench/export.py、scripts/proxybench_channel.py；代理结果在 output/nodes.txt，TCP／TLS 结果在 output/Nodes-TCP/nodes.txt，每行如 82.139.242.5:443#DE。初始空文件不是已完成的优选结果。
+输出与推送：core/proxybench/export.py、scripts/proxybench_channel.py；代理结果在 output/nodes.txt，TCPing／TLS 共用结果在 output/Npdex-Tcp/Tls.txt，每行如 82.139.242.5:443#DE。初始空文件不是已完成的优选结果。
 运行状态：代理 data/proxy-bench，免代理 data/tcp-bench；规则 data/proxybench-rules.json 与 data/tcpbench-rules.json；中文日志 logs/proxy-events.jsonl 与 logs/tcp_tls-events.jsonl，关闭后保留。
 版本与打包：core/proxybench/__init__.py 中的 VERSION；scripts/build_windows_package.py、build_windows_installer.py、package_proxybench.py 和 build_delivery_bundle.py。修改版本时只需更新 VERSION。
 

@@ -444,7 +444,7 @@ class Pipeline:
                 if self.store.state:
                     self.store.commit()
                 self.update(status="Failed", stage=safe_error(exc))
-                publish(self.settings["output_dir"], [], {"status": "failed", "error_category": safe_error(exc),
+                publish(self.settings["output_dir"], [], {"status": "failed", "measurement_mode": self.settings.get("measurement_mode", "proxy"), "error_category": safe_error(exc),
                         "last_good_preserved": (self.settings["output_dir"] / "nodes.json").exists()})
                 raise
             finally:

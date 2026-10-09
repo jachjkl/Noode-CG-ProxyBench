@@ -20,7 +20,7 @@ def package(destination: Path) -> list[str]:
     with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as archive:
         for name in files:
             source = ROOT / name
-            if name in {"output/nodes.txt", "output/Nodes-TCP/nodes.txt"}:
+            if name in {"output/nodes.txt", "output/Nodes-TCP/nodes.txt", "output/Npdex-Tcp/Tls.txt"}:
                 archive.writestr("Noode-CG-ProxyBench/" + name, b"")
                 included.append(name)
             elif source.is_file():

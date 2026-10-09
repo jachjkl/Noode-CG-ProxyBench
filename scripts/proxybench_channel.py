@@ -13,13 +13,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.io_utils import atomic_write_bytes, atomic_write_json
-from core.proxybench.export import ARTIFACTS, gate, nodes_text
+from core.proxybench.export import ARTIFACTS, DIRECT_SUBSCRIPTION, gate, nodes_text
 from core.proxybench.modes import OUTPUTS, validate_limits
 
 HANDOFF = {"data/handoff/proxybench-pool.json.gz", "data/handoff/proxybench-cloud-health.json"}
 RESULTS = {"output/nodes.txt", "output/nodes.json", "output/nodes.csv", "output/api.json", "output/ip.zip",
            "output/health.json", "data/handoff/proxybench-attempted.json.gz"}
 RESULTS.update(f"output/Nodes-TCP/{name}" for name in (*ARTIFACTS, "health.json"))
+RESULTS.add(DIRECT_SUBSCRIPTION)
 
 
 def result_prefix(files: dict[str, bytes]) -> str:
@@ -27,7 +28,8 @@ def result_prefix(files: dict[str, bytes]) -> str:
     if len(paths) != 1:
         raise ValueError("结果交接必须只包含一种测速方式的健康报告")
     prefix = paths[0]
-    if any(name.startswith("output/") and (not name.startswith(prefix + "/") or "/" in name[len(prefix) + 1:]) for name in files):
+    if any(name.startswith("output/") and not (prefix == OUTPUTS["tcp_tls"] and name == DIRECT_SUBSCRIPTION)
+           and (not name.startswith(prefix + "/") or "/" in name[len(prefix) + 1:]) for name in files):
         raise ValueError("禁止一种测速方式覆盖另一种结果目录")
     return prefix
 
@@ -49,6 +51,8 @@ def validate_result_files(files: dict[str, bytes]) -> None:
             raise ValueError("不得混合不同测速方式的记录")
         if files[f"{prefix}/nodes.txt"] != nodes_text(records).encode("utf-8"):
             raise ValueError("nodes.txt 必须与优选结果一致，使用 IP:端口#国家代码 格式")
+        if DIRECT_SUBSCRIPTION in files and files[DIRECT_SUBSCRIPTION] != files[f"{prefix}/nodes.txt"]:
+            raise ValueError("TCPing／TLS 共享文件必须与最终名单及排序完全一致")
     elif any(name.startswith("output/") and name != f"{prefix}/health.json" for name in files):
         raise ValueError("未通过门槛的结果不能覆盖订阅")
 
@@ -67,6 +71,8 @@ def pack(root: Path, kind: str, mode="proxy") -> bytes:
             allowed = {f"{prefix}/health.json", "data/handoff/proxybench-attempted.json.gz"}
     files = {relative: (root / relative).read_bytes() for relative in sorted(allowed) if (root / relative).is_file()}
     if kind == "result":
+        if mode == "tcp_tls" and health.get("published"):
+            files[DIRECT_SUBSCRIPTION] = files[f"{prefix}/nodes.txt"]
         validate_result_files(files)
     import io
     stream = io.BytesIO()
@@ -89,6 +95,9 @@ def unpack(content: bytes, expected: str, root: Path, kind: str) -> None:
         files = {name: package.read(name) for name in names}
         if kind == "result":
             validate_result_files(files)
+            prefix = result_prefix(files)
+            if prefix == OUTPUTS["tcp_tls"] and json.loads(files[f"{prefix}/health.json"]).get("published"):
+                files[DIRECT_SUBSCRIPTION] = files[f"{prefix}/nodes.txt"]
         for name, data in files.items():
             atomic_write_bytes(root / name, data)
 

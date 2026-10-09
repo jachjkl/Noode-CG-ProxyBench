@@ -10,7 +10,7 @@ Noode-CG-ProxyBench/
     multi_dashboard.py              One window, two methods, one active task
     pipeline.py                     Screening, competition, replenishment
     benchmark.py                    Authenticated proxy website tests
-    direct_benchmark.py              Original TCP/TLS/speed adapters
+    direct_benchmark.py              Exclusive original TCPing or TLS, then download
     colo-locations.json             Public edge location mapping
     events.py                       Persistent Chinese JSON-lines logs
     export.py                       Transactional ranked output

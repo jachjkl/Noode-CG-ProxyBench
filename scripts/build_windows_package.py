@@ -87,7 +87,7 @@ shell.Run command, 0, False
 网速沿用原安装包：一次 512 KiB 样本，至少 95% 正文完成，I/O 超时 8 秒，正文计时上限 7 秒。所有规则均有中文解释，保存后再次打开继续使用。
 两个固定来源每次打开只获取一次全量 IP；自动补充和继续获取均获取 10000 个本窗口未获取过的边缘 IP。
 顶部选择【代理三网站测速】或【TCP／TLS（免代理）】。免代理方式沿用原包，连续三次 TCP，TLS 可开关，丢包、抖动、平均延迟与下载速度均按规则淘汰；两种方式分别保存规则。
-规则中自定义常规 IP 和日本追加数量，例如 100、200、300；日本可设为 0。代理输出 output/nodes.txt，TCP 输出 output/Nodes-TCP/nodes.txt，均为 IP:端口#国家代码。
+规则中自定义常规 IP 和日本追加数量，例如 100、200、300；日本可设为 0。代理输出 output/nodes.txt，TCPing／TLS 共用输出 output/Npdex-Tcp/Tls.txt，均为 IP:端口#国家代码。
 【停止并保存】只停止并保留已测结果与断点，不自动推送。【手动推送】复测已有结果并按实际合格数量推送，不获取新 IP；运行中点击会在当前批次完成后执行，最多取规则中设置的数量。自动优选补足所设名额后发布。
 运行计时器显示优选累计时间和软件打开时长；暂停不计入优选时间，恢复时继续计时，重新开始会清零。推送失败保留待发布包，手动推送可重传。
 左右列表独立分页，每页 300 个 IP，云端结果显示实际数量和原推送排名。步骤完成保留底部荧光与上升粒子效果。
@@ -110,7 +110,7 @@ shell.Run command, 0, False
             archive.write(path, "Noode-CG-ProxyBench-Windows/" + relative)
         for name in sorted(SOURCE_OUTPUTS):
             source = ROOT / name
-            placeholder = name in {"output/nodes.txt", "output/Nodes-TCP/nodes.txt"}
+            placeholder = name in {"output/nodes.txt", "output/Nodes-TCP/nodes.txt", "output/Npdex-Tcp/Tls.txt"}
             if placeholder or source.is_file():
                 archive.writestr("Noode-CG-ProxyBench-Windows/app/" + name, b"" if placeholder else source.read_bytes())
         if personal:
