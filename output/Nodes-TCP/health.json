@@ -1,0 +1,28 @@
+{
+  "seed": "real-direct120",
+  "session_id": "real-direct120",
+  "cycle": 1,
+  "status": "partial",
+  "publication_limits": {
+    "general": 300,
+    "japan": 10
+  },
+  "measurement_mode": "tcp_tls",
+  "manual_publication": true,
+  "candidate_total": 100,
+  "tested_count": 100,
+  "qualified_count": 25,
+  "jp_qualified_count": 0,
+  "mihomo_version": "TCP／TLS 直连引擎",
+  "batch_total": 1,
+  "batch_completed": 1,
+  "run_id": "9b24e091400e9a84c0abbe0930aadc15",
+  "previous_general_competitors": 0,
+  "publish_gate_passed": true,
+  "published": true,
+  "needs_more": false,
+  "quota_complete": false,
+  "general_final_count": 25,
+  "jp_final_count": 0,
+  "unique_final_count": 25
+}
