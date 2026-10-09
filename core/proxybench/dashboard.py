@@ -17,7 +17,9 @@ from .mihomo_manager import owned_core_running
 from .modes import mode_settings
 from .profile import ProxyProfile, discover_profiles, import_discovered, save_import
 from .run_clock import RunClock
+from .session_lifecycle import clear_shared, clear_transient, read_saved, save_measured, upgrade_direct_parallelism
 from .settings import current_rules, load_settings, validate_rules
+from .state import partial_results
 from .workflow import progress
 
 
@@ -30,6 +32,8 @@ class BenchDashboard:
         self.settings = mode_settings(load_settings(self.app / "config.yaml"), mode)
         self.direct = mode == "tcp_tls"
         self.events = EventLog(self.app, mode)
+        if upgrade_direct_parallelism(self.settings):
+            self.events.append("旧版默认并发已对齐原包：直连下载 20、TLS 100、TCP 超时 1 秒；延迟、丢包、抖动、速度和发布数量门槛保持原值")
         self.opened_at = time.monotonic()
         self.clock = RunClock(self.settings["state_dir"] / "run-timing.json")
         self.process = None
@@ -37,6 +41,10 @@ class BenchDashboard:
         self.log_handle = None
         self.file_cache = {}
         self.preserve_on_close = False
+        self.explicit_stop = False
+        self.recovery_pending = False
+        self.cleaned_on_open = False
+        self.lifecycle_path = self.app / "data" / f"{mode}-window.json"
         self.closing = False
         self.cloud_refresh_thread = None
         self.cloud_published = {"status": "Checking", "nodes": [], "total": 0, "general": 0, "japan": 0, "message": "正在读取 GitHub 已发布 IP"}
@@ -47,8 +55,19 @@ class BenchDashboard:
             prior = {**prior, "status": "Stopped", "stage": message, "speed_active": []}
             atomic_write_json(self.settings["state_dir"] / "live.json", prior)
             atomic_write_json(self.settings["state_dir"] / "cloud-live.json", {**prior_cloud, "status": "Stopped", "interrupted": True, "stage": message})
-        if (self.settings["state_dir"] / "batch-state.json").exists() and prior.get("status") in {"Running", "Paused", "Stopped", "Failed"}:
-            self.preserve_on_close = True
+        marker = self.read_cached(self.lifecycle_path, default={})
+        failed = prior.get("status") in {"Failed", "Validation Failed"} or prior_cloud.get("status") == "Failed" or prior_cloud.get("interrupted", False)
+        normal = marker.get("last_exit") == "normal" or (not marker and prior.get("status") == "Stopped" and not failed)
+        if normal and not owned_core_running(self.settings["runtime_dir"]):
+            save_measured(self.settings)
+            clear_transient(self.settings)
+            self.file_cache.clear()
+            self.clock = RunClock(self.settings["state_dir"] / "run-timing.json")
+            self.cleaned_on_open = True
+        else:
+            self.recovery_pending = bool(failed or marker.get("last_exit") == "error" or marker.get("recovery_pending") or prior.get("status") in {"Running", "Paused"})
+            self.preserve_on_close = self.recovery_pending
+        atomic_write_json(self.lifecycle_path, {"last_exit": "open", "recovery_pending": self.recovery_pending})
         atomic_write_json(self.settings["state_dir"] / "session.json", {"session_id": session_id or secrets.token_hex(16)})
 
     def refresh_cloud(self) -> None:
@@ -101,10 +120,13 @@ class BenchDashboard:
         partial = self.read_cached(settings["state_dir"] / "partial-batch.json", default={})
         if partial.get("run_id") and partial.get("run_id") == live.get("run_id") and partial.get("phase") == live.get("phase"):
             measured.update(partial.get("results", {}))
+        measured.update(partial_results(settings["state_dir"], live.get("run_id"), live.get("phase")))
         active_rows = live.get("candidates", []) if same_pool or not cloud or live.get("phase") == "validation" else []
         for row in active_rows:
             measured[f"{row['ip']}:{row['port']}"] = row
         saved_rules = current_rules(settings)
+        if kind == "results" and not measured:
+            measured = {f"{row['ip']}:{row['port']}": {**row, "qualified": False, "status": "Saved Result"} for row in read_saved(settings)}
         for key, row in measured.items():
             if row.get("qualified") and (failure := limit_failure(row, saved_rules)):
                 measured[key] = {**row, "qualified": False, "status": failure}
@@ -199,6 +221,7 @@ class BenchDashboard:
         partial = self.read_cached(settings["state_dir"] / "partial-batch.json", default={})
         if partial.get("run_id") == live.get("run_id") and partial.get("phase") == live.get("phase"):
             cached_results.update(partial.get("results", {}))
+        cached_results.update(partial_results(settings["state_dir"], live.get("run_id"), live.get("phase")))
         if cached_results:
             live["qualified_count"] = sum(bool(row.get("qualified")) and not limit_failure(row, saved_rules) for row in cached_results.values())
         control = self.read_cached(settings["state_dir"] / "control.json", default={})
@@ -211,6 +234,7 @@ class BenchDashboard:
                 "local_running": local_running,
                 "actions_url": f"https://github.com/{self.legacy.repository}/actions",
                 "cloud": cloud, "cloud_published": {key: value for key, value in self.cloud_published.items() if key != "nodes"}, "workflow": progress(live, cloud, health),
+                "recovery_pending": self.recovery_pending,
                 "can_resume": (settings["state_dir"] / "batch-state.json").exists()}
 
     def action(self, action: str, payload: dict) -> dict:
@@ -240,7 +264,11 @@ class BenchDashboard:
                 return {"saved": True, "rules": rules, "effective": "已保存到本机，下一批生效；再次打开也使用这些规则" if running else "已保存到本机，立即生效；再次打开也使用这些规则"}
             if action in {"pause", "stop", "resume-paused"}:
                 if action == "stop" and not self.closing:
-                    self.preserve_on_close = True
+                    self.explicit_stop = True
+                    self.preserve_on_close = False
+                    self.recovery_pending = False
+                    save_measured(settings)
+                    atomic_write_json(self.lifecycle_path, {"last_exit": "normal", "explicit_stop": True})
                 path = settings["state_dir"] / "control.json"
                 if action == "resume-paused":
                     path.unlink(missing_ok=True)
@@ -250,11 +278,11 @@ class BenchDashboard:
                     atomic_write_json(path, {"action": action})
                     if action == "pause":
                         self.clock.stop()
-                self.events.append({"stop": "用户停止并保存：保留已测结果和断点，不自动推送", "pause": "用户暂停了测试", "resume-paused": "用户继续测试"}[action])
+                self.events.append({"stop": "用户停止并保存：保存已测合格结果；正常关闭后下次全量获取，不续断点", "pause": "用户暂停了测试", "resume-paused": "用户继续测试"}[action])
                 return {"requested": action}
             if action == "publish":
                 pending = (self.app / "runtime" / ("pending-publish-tcp" if self.direct else "pending-publish") / "manifest.json").exists()
-                if not running and not pending and not (settings["state_dir"] / "batch-state.json").exists() and not (settings["output_dir"] / "nodes.json").exists():
+                if not running and not pending and not (settings["state_dir"] / "batch-state.json").exists() and not (settings["output_dir"] / "nodes.json").exists() and not read_saved(settings):
                     raise ValueError("没有可推送的已测结果，请先开始优选")
                 atomic_write_json(settings["state_dir"] / "publish-request.json", {"requested": True})
                 if running:
@@ -294,6 +322,12 @@ class BenchDashboard:
                     ProxyProfile.load(settings["profile"])
                 command = "validate-runtime" if action == "validate" else "auto-cloud"
                 mode = {"continue-fetch": "continue", "resume": "resume", "publish": "publish"}.get(action)
+                if action in {"start", "auto-start"} and self.recovery_pending:
+                    mode = "resume"
+                if action in {"start", "auto-start", "resume", "continue-fetch"}:
+                    self.recovery_pending = False
+                    self.explicit_stop = False
+                atomic_write_json(self.lifecycle_path, {"last_exit": "running"})
                 arguments = ["--mode", mode] if mode else []
                 if command == "auto-cloud" and self.direct:
                     arguments.extend(["--measurement-mode", "tcp_tls"])
@@ -310,7 +344,7 @@ class BenchDashboard:
                                                 env=env,
                                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 self.legacy.process = self.process
-                self.clock.start(reset=action in {"start", "auto-start"})
+                self.clock.start(reset=action in {"start", "auto-start"} and mode != "resume")
                 return {"started": True, "action": action,
                         "message": "正在复测并推送已有合格结果；本次不获取新 IP" if action == "publish" else "任务已启动，获取与实测结果会自动更新"}
             if action == "cloud-start":
@@ -322,7 +356,8 @@ class BenchDashboard:
     def request_close(self) -> None:
         live = self.read_cached(self.settings["state_dir"] / "live.json", default={})
         cloud = self.read_cached(self.settings["state_dir"] / "cloud-live.json", default={})
-        self.preserve_on_close |= live.get("status") == "Failed" or cloud.get("status") == "Failed" or cloud.get("interrupted", False)
+        if not self.explicit_stop:
+            self.preserve_on_close |= live.get("status") == "Failed" or cloud.get("status") == "Failed" or cloud.get("interrupted", False)
         self.closing = True
         self.clock.stop()
         atomic_write_json(self.settings["state_dir"] / "cloud-read-control.json", {"action": "stop"})
@@ -332,26 +367,21 @@ class BenchDashboard:
         return not (self.process and self.process.poll() is None or owned_core_running(self.settings["runtime_dir"]) or
                     self.cloud_refresh_thread and self.cloud_refresh_thread.is_alive())
 
-    def finish_close(self, normal: bool) -> bool:
+    def finish_close(self, normal: bool, *, clear_shared_cache=True) -> bool:
         """Delete only known transient files after the owned task releases its locks."""
         live = self.read_cached(self.settings["state_dir"] / "live.json", default={})
         cloud = self.read_cached(self.settings["state_dir"] / "cloud-live.json", default={})
-        self.preserve_on_close |= live.get("status") == "Failed" or cloud.get("status") == "Failed" or cloud.get("interrupted", False)
-        if not normal or self.preserve_on_close or not self.ready_to_close():
+        if not self.explicit_stop:
+            self.preserve_on_close |= live.get("status") == "Failed" or cloud.get("status") == "Failed" or cloud.get("interrupted", False)
+        if not self.ready_to_close():
             return False
-        app = self.app.resolve()
-        state = self.settings["state_dir"].resolve()
-        if app not in state.parents or state.name not in {"proxy-bench", "tcp-bench"}:
-            raise ValueError("缓存目录不属于当前软件，未清理")
-        if state.exists():
-            for path in state.iterdir():
-                if path.is_file():
-                    path.unlink(missing_ok=True)
-        handoff = (app / "data/handoff").resolve()
-        if app not in handoff.parents:
-            raise ValueError("候选缓存目录不属于当前软件，未清理")
-        if not (app / ".git").exists():
-            for name in ("proxybench-pool.json.gz", "proxybench-cloud-health.json", "proxybench-session-history.json.gz", "proxybench-attempted.json.gz"):
-                (handoff / name).unlink(missing_ok=True)
+        if not normal or self.preserve_on_close:
+            atomic_write_json(self.lifecycle_path, {"last_exit": "error", "recovery_pending": True})
+            return False
+        save_measured(self.settings)
+        atomic_write_json(self.lifecycle_path, {"last_exit": "normal"})
+        clear_transient(self.settings)
+        if clear_shared_cache:
+            clear_shared(self.app)
         self.file_cache.clear()
         return True

@@ -86,7 +86,7 @@ class ManualPublishTimerTests(unittest.TestCase):
             with patch("core.proxybench.dashboard.subprocess.Popen") as spawn:
                 dashboard.action("stop", {})
             spawn.assert_not_called()
-            self.assertTrue(dashboard.preserve_on_close)
+            self.assertFalse(dashboard.preserve_on_close)
             self.assertFalse((dashboard.settings["state_dir"] / "publish-request.json").exists())
             self.assertEqual(json.loads((dashboard.settings["state_dir"] / "control.json").read_text())["action"], "stop")
 

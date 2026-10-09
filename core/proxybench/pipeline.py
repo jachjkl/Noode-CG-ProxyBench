@@ -27,7 +27,7 @@ from .profile import ProfileChanged, ProxyProfile, refresh_existing, safe_error
 from .settings import current_rules
 from .state import Control, RunLock, Stopped, Store
 
-PROXY_POLICY = "entry-proxy-v9-verified-trace-get"
+PROXY_POLICY = "entry-proxy-v10-nonblocking-observation"
 
 
 def prepare(settings: dict, continuation: bool = False, session_id: str = "", reuse: bool = False) -> dict:
@@ -69,7 +69,7 @@ class Pipeline:
     def __init__(self, settings: dict, manager=None, pool_builder=build) -> None:
         self.settings = settings
         self.direct = settings.get("measurement_mode") == "tcp_tls"
-        self.policy = ("direct-exclusive-v2-" + ("tls" if current_rules(settings)["tls_enabled"] else "tcp")) if self.direct else PROXY_POLICY
+        self.policy = ("direct-exclusive-v3-nonblocking-" + ("tls" if current_rules(settings)["tls_enabled"] else "tcp")) if self.direct else PROXY_POLICY
         self.store = Store(settings["state_dir"])
         if self.direct and manager is None:
             from .direct_benchmark import DirectManager
@@ -205,8 +205,11 @@ class Pipeline:
                         from .direct_benchmark import DirectBenchmark
                         DirectBenchmark(rules, self.control, self.update, domain=self.settings.get("direct_tls_domain", "www.cloudflare.com")).batch(batch, completed, reuse_tcp=False)
                     else:
+                        from .observation import Observation
                         benchmark.geo_policy = "confirm" if fixed_rules else "quick"
-                        benchmark.batch(batch, profiles, completed)
+                        with Observation(self.update, completed) as observer:
+                            benchmark.update = observer.update
+                            benchmark.batch(batch, profiles, observer.completed)
                     break
                 except CoreError:
                     self.manager.stop()
@@ -278,7 +281,7 @@ class Pipeline:
             recover(self.settings["output_dir"])
             state = self.store.load() if resume else {}
             fresh_handoff = False
-            if state and handoff and not publish_only:
+            if state and handoff and not publish_only and not self.settings.get("resume_checkpoint_only"):
                 channel = self.settings["root"] / "data/handoff/proxybench-pool.json.gz"
                 handoff_report = json.loads(gzip.decompress(channel.read_bytes()))["report"]
                 fresh_handoff = handoff_report.get("seed") != state.get("sources", {}).get("seed")
@@ -297,7 +300,8 @@ class Pipeline:
                 self.store.partial = {}
             if state and state.get("measurement_policy") != self.policy:
                 if publish_only:
-                    state["manual_retest_seeds"] = [copy.deepcopy(row) for row in state.get("results", {}).values() if row.get("qualified")]
+                    measured = {**state.get("results", {}), **state.get("general_results", {}), **state.get("jp_results", {}), **self.store.partial}
+                    state["manual_retest_seeds"] = [copy.deepcopy(row) for row in measured.values() if row.get("qualified")]
                 if state.get("results"):
                     atomic_write_bytes(self.settings["state_dir"] / f"previous-policy-{secrets.token_hex(4)}-results.json.gz",
                                        gzip.compress(json.dumps(state["results"]).encode(), mtime=0))
@@ -310,6 +314,8 @@ class Pipeline:
                 if not state:
                     saved_path = self.settings["output_dir"] / "nodes.json"
                     records = json.loads(saved_path.read_text(encoding="utf-8")) if saved_path.exists() else []
+                    from .session_lifecycle import read_saved
+                    records = self.unique_ips([*read_saved(self.settings), *records])
                     if not records:
                         raise ValueError("没有可手动推送的已测结果，请先开始优选")
                     state = {"run_id": secrets.token_hex(16), "session_id": secrets.token_hex(16), "cycle": 1,

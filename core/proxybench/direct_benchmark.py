@@ -18,6 +18,7 @@ from core.tcp_scan import _probe_once as tcp_probe
 from core.tls_check import _probe_once as tls_probe
 from core.tls_check import make_ssl_context
 
+from .observation import Observation
 from .settings import validate_tcp_rules
 
 
@@ -127,14 +128,17 @@ class DirectBenchmark:
         return await run_worker_pool(candidates, worker, min(100, self.rules[f"{self.probe}_concurrency"]))
 
     def batch(self, candidates: list[dict], completed, *, reuse_tcp=False) -> list[dict]:
-        return asyncio.run(self._batch(candidates, completed))
+        with Observation(self.update, completed) as observer:
+            return asyncio.run(self._batch(candidates, observer.completed, observer.update))
 
-    async def _batch(self, candidates: list[dict], completed) -> list[dict]:
+    async def _batch(self, candidates: list[dict], completed, notify=None) -> list[dict]:
         records = {}
+        notify = notify or self.update
+        stage = f"{self.probe.upper()} Testing"
 
         def show(record):
-            records[record["key"]] = copy.deepcopy(record)
-            self.update(stage=record["status"], candidates=list(records.values()), status="Running")
+            records[record["key"]] = record
+            notify(stage=stage, candidates=list(records.values()), status="Running")
 
         def finish(record):
             record.update(tested_at=datetime.now(UTC).isoformat())
@@ -151,6 +155,7 @@ class DirectBenchmark:
         # Match the reference's barrier between latency and bandwidth tests.
         tested = await run_worker_pool(candidates, measure, min(100, self.rules[f"{self.probe}_concurrency"]))
         survivors = [r for r in tested if r["status"].endswith("Passed")]
+        stage = "Direct Speed Testing"
 
         async def download(record):
             record["status"] = "Direct Speed Testing"
@@ -187,4 +192,5 @@ class DirectBenchmark:
             return record
 
         await run_worker_pool(survivors, download, self.rules["speed_concurrency"])
+        notify(_force=True, stage=stage, candidates=list(records.values()), status="Running")
         return tested

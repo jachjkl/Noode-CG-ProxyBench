@@ -14,13 +14,13 @@ RULES = {"batch_size": 100, "round_count": 5, "max_proxy_average_latency_ms": 30
          "download_timeout_seconds": 8.0, "delay_concurrency": 60, "speed_concurrency": 4,
          "round_cooldown_seconds": 0.5, "publish_count": 100, "jp_publish_count": 10,
          "max_proxy_jitter_ms": 500.0, "adaptive_concurrency": 1, "quick_finish": 1}
-TCP_RULES = {"batch_size": 100, "tcp_attempts": 3, "tcp_timeout_seconds": 1.2,
+TCP_RULES = {"batch_size": 100, "tcp_attempts": 3, "tcp_timeout_seconds": 1.0,
              "tcp_concurrency": 256, "max_tcp_average_latency_ms": 200.0,
              "max_loss_percent": 20.0, "max_jitter_ms": 200.0, "tls_enabled": 0,
              "tls_attempts": 3, "tls_timeout_seconds": 4.0, "max_tls_average_latency_ms": 200.0,
-             "tls_concurrency": 32, "min_download_mbps": 3.0, "download_bytes": 524288,
+             "tls_concurrency": 100, "min_download_mbps": 3.0, "download_bytes": 524288,
              "minimum_completion_ratio": 0.95, "maximum_download_seconds": 7.0,
-             "download_timeout_seconds": 8.0, "speed_concurrency": 4,
+             "download_timeout_seconds": 8.0, "speed_concurrency": 20,
              "publish_count": 300, "jp_publish_count": 10, "quick_finish": 1}
 SITES = (("google", "https://www.gstatic.com/generate_204", "204"),
          ("cloudflare", "https://www.cloudflare.com/cdn-cgi/trace", "200"),
@@ -76,8 +76,8 @@ def validate_tcp_rules(value: dict) -> dict:
             raise ValueError(f"规则不能为零：{key}")
     if rules["tcp_attempts"] != 3 or rules["tls_attempts"] != 3:
         raise ValueError("TCP 和 TLS 均连续测试三次，按三次真实测量判断")
-    if not 1 <= rules["batch_size"] <= 100 or not 1 <= rules["tcp_concurrency"] <= 512 or not 1 <= rules["tls_concurrency"] <= 128 or not 1 <= rules["speed_concurrency"] <= 8:
-        raise ValueError("每批最多 100；TCP 并发最多 512，TLS 并发最多 128，下载并发最多 8")
+    if not 1 <= rules["batch_size"] <= 100 or not 1 <= rules["tcp_concurrency"] <= 512 or not 1 <= rules["tls_concurrency"] <= 128 or not 1 <= rules["speed_concurrency"] <= 20:
+        raise ValueError("每批最多 100；TCP 并发最多 512，TLS 并发最多 128，直连下载并发最多 20")
     if rules["tls_enabled"] not in {0, 1} or rules["quick_finish"] not in {0, 1} or rules["max_loss_percent"] > 100:
         raise ValueError("开关或丢包率超出范围")
     if rules["tcp_timeout_seconds"] > 5 or rules["tls_timeout_seconds"] > 15 or rules["download_timeout_seconds"] > 120 or rules["maximum_download_seconds"] > 120:

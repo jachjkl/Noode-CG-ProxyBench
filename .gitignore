@@ -12,6 +12,9 @@ dashboard-cache/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+data/*-window.json
+data/saved-measurements/
+data/tcpbench-parallelism-v2.json
 
 # Per-machine dashboard settings and transient cycle state.
 data/local-rules.json

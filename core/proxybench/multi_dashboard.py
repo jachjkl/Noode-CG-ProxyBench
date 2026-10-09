@@ -11,6 +11,7 @@ from core.io_utils import atomic_write_json
 from .dashboard import BenchDashboard
 from .mihomo_manager import owned_core_running
 from .modes import MODES, publication_limits
+from .session_lifecycle import clear_shared
 from .settings import current_rules
 
 
@@ -21,6 +22,8 @@ class MultiModeDashboard:
         session = secrets.token_hex(16)
         self.controllers = {mode: BenchDashboard(SimpleNamespace(root=legacy.root, repository=legacy.repository), mode=mode, session_id=session) for mode in MODES}
         self.app = self.controllers["proxy"].app
+        if any(child.cleaned_on_open for child in self.controllers.values()) and not any(child.recovery_pending for child in self.controllers.values()):
+            clear_shared(self.app)
         self.options = self.app / "data/proxybench-ui.json"
         try:
             self.mode = json.loads(self.options.read_text(encoding="utf-8")).get("mode", "proxy")
@@ -106,10 +109,7 @@ class MultiModeDashboard:
         return all(child.ready_to_close() for child in self.controllers.values())
 
     def finish_close(self, normal):
-        if not normal or any(child.preserve_on_close or child.read_cached(child.settings["state_dir"] / "cloud-live.json", default={}).get("status") == "Failed"
-                             for child in self.controllers.values()):
-            return False
-        results = [child.finish_close(normal) for child in self.controllers.values()]
+        results = [child.finish_close(normal, clear_shared_cache=False) for child in self.controllers.values()]
         if all(results):
-            (self.app / "data/window-candidates.json.gz").unlink(missing_ok=True)
+            clear_shared(self.app)
         return all(results)

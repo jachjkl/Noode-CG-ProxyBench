@@ -185,6 +185,17 @@ class DesktopCloudController(CloudController):
                 session["session_id"] = state["session_id"]
             atomic_write_json(session_path, session)
             pending = (self.pending_dir / "manifest.json").exists()
+            if pending and mode == "auto" and not state:
+                saved = self.root / "data/saved-measurements"
+                saved.mkdir(parents=True, exist_ok=True)
+                tag = self.settings.get("measurement_mode", "proxy")
+                for name in ("result.zip", "manifest.json"):
+                    original = self.pending_dir / name
+                    atomic_write_bytes(saved / f"stopped-{tag}-{name}", original.read_bytes())
+                (self.pending_dir / "manifest.json").unlink()
+                (self.pending_dir / "result.zip").unlink()
+                pending = False
+                self.events.append("上次停止的待推送结果已另存；本次重新全量获取 IP")
             if pending:
                 with zipfile.ZipFile(self.pending_dir / "result.zip") as package:
                     files = {name: package.read(name) for name in package.namelist()}
@@ -216,6 +227,7 @@ class DesktopCloudController(CloudController):
             rounds = 0
             while not limit or rounds < limit:
                 rounds += 1
+                self.settings["resume_checkpoint_only"] = bool(resumable and state)
                 if self.control.publication_requested():
                     return self.finish_manual(self.local_select(publish_only=True))
                 # Saved handoff and local checkpoints require no live GitHub connection to resume.

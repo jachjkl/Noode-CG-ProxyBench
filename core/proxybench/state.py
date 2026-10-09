@@ -11,6 +11,24 @@ from pathlib import Path
 from core.io_utils import atomic_write_bytes, atomic_write_json
 
 
+def partial_results(root: Path, run_id, phase) -> dict:
+    results = {}
+    old = root / "partial-batch.json"
+    if old.exists():
+        payload = json.loads(old.read_text(encoding="utf-8"))
+        if payload.get("run_id") == run_id and payload.get("phase") == phase:
+            results.update(payload.get("results", {}))
+    journal = root / "partial-batch.jsonl"
+    if journal.exists():
+        for line in journal.read_bytes().splitlines(keepends=True):
+            if not line.endswith(b"\n"):
+                break  # An abrupt exit can truncate only the final append.
+            payload = json.loads(line)
+            if payload.get("run_id") == run_id and payload.get("phase") == phase:
+                results[payload["result"]["key"]] = payload["result"]
+    return results
+
+
 class Store:
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -18,6 +36,8 @@ class Store:
         self.state = {}
         self.generation = 0
         self.partial = {}
+        self.pool_digest = None
+        self.partial_ready = False
 
     def load(self) -> dict:
         pointer = self.root / "batch-state.json"
@@ -32,33 +52,47 @@ class Store:
             raise ValueError("Checkpoint 摘要不匹配；保留 Last Good")
         self.state = json.loads(gzip.decompress(content))
         self.generation = manifest["generation"]
-        partial_path = self.root / "partial-batch.json"
-        if partial_path.exists():
-            partial = json.loads(partial_path.read_text(encoding="utf-8"))
-            if partial.get("run_id") == self.state.get("run_id") and partial.get("phase") == self.state.get("phase"):
-                self.partial = partial.get("results", {})
+        self.partial = partial_results(self.root, self.state.get("run_id"), self.state.get("phase"))
         return self.state
 
     def save_partial(self, result: dict) -> None:
         self.partial[result["key"]] = result
-        atomic_write_json(self.root / "partial-batch.json", {"run_id": self.state["run_id"],
-                                                             "phase": self.state["phase"], "results": self.partial})
+        journal = self.root / "partial-batch.jsonl"
+        if not self.partial_ready:
+            if journal.exists():
+                content = journal.read_bytes()
+                if content and not content.endswith(b"\n"):
+                    with journal.open("r+b") as stream:
+                        stream.truncate(content.rfind(b"\n") + 1)
+            self.partial_ready = True
+        line = json.dumps({"run_id": self.state["run_id"], "phase": self.state["phase"], "result": result}, ensure_ascii=False, separators=(",", ":")).encode() + b"\n"
+        with journal.open("ab") as stream:
+            stream.write(line)
+            stream.flush()
+            os.fsync(stream.fileno())
 
     def commit(self) -> None:
         self.generation += 1
         name = f"generation-{self.generation:08d}.json.gz"
-        content = gzip.compress(json.dumps(self.state, ensure_ascii=False, separators=(",", ":")).encode(), mtime=0)
+        content = gzip.compress(json.dumps(self.state, ensure_ascii=False, separators=(",", ":")).encode(), compresslevel=1, mtime=0)
         atomic_write_bytes(self.root / name, content)
         atomic_write_json(self.root / "batch-state.json", {"generation": self.generation, "snapshot": name,
                                                           "sha256": hashlib.sha256(content).hexdigest()})
         self.partial = {}
         (self.root / "partial-batch.json").unlink(missing_ok=True)
+        (self.root / "partial-batch.jsonl").unlink(missing_ok=True)
         # These are derivative, inspectable views. The manifest above is the transaction boundary.
-        for name, payload in (("candidate-pool", self.state.get("pool", [])),
-                              ("attempted", self.state.get("results", {})),
-                              ("qualified", [x for x in self.state.get("results", {}).values() if x.get("qualified")]),
-                              ("benchmark-results", self.state.get("results", {}))):
-            atomic_write_bytes(self.root / f"{name}.json.gz", gzip.compress(json.dumps(payload, ensure_ascii=False).encode(), mtime=0))
+        pool = json.dumps(self.state.get("pool", []), ensure_ascii=False).encode()
+        digest = hashlib.sha256(pool).digest()
+        if digest != self.pool_digest or not (self.root / "candidate-pool.json.gz").exists():
+            atomic_write_bytes(self.root / "candidate-pool.json.gz", gzip.compress(pool, compresslevel=1, mtime=0))
+            self.pool_digest = digest
+        results = self.state.get("results", {})
+        content = gzip.compress(json.dumps(results, ensure_ascii=False).encode(), compresslevel=1, mtime=0)
+        for name in ("attempted", "benchmark-results"):
+            atomic_write_bytes(self.root / f"{name}.json.gz", content)
+        qualified = [x for x in results.values() if x.get("qualified")]
+        atomic_write_bytes(self.root / "qualified.json.gz", gzip.compress(json.dumps(qualified, ensure_ascii=False).encode(), compresslevel=1, mtime=0))
         # Retain current and previous generations; every target is a fixed child of the state root.
         for old in self.root.glob("generation-*.json.gz"):
             if old.name < f"generation-{max(0, self.generation - 2):08d}.json.gz":
