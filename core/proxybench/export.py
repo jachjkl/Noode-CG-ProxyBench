@@ -65,6 +65,14 @@ def publish(root: Path, records: list[dict], health: dict) -> dict:
               "jp_final_count": sum(item.get("lane") == "jp_append" for item in records),
               "unique_final_count": len({item["ip"] for item in records})}
     if not passed:
+        previous_path = root / "health.json"
+        try:
+            previous = json.loads(previous_path.read_text(encoding="utf-8")) if previous_path.exists() else {}
+        except (OSError, ValueError):
+            previous = {}
+        good = previous if previous.get("published") else previous.get("last_good_publication", {})
+        if good.get("published"):
+            report["last_good_publication"] = {key: good[key] for key in ("published", "manual_publication", "publication_limits", "general_final_count", "jp_final_count", "unique_final_count") if key in good}
         atomic_write_json(root / "health.json", report)
         return report
     public = [{**{key: value for key, value in record.items() if key in PUBLIC_FIELDS},

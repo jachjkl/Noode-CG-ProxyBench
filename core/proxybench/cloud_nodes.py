@@ -45,6 +45,8 @@ def read_published(client) -> dict:
     if partial:
         health_meta = client.command(["api", f"repos/{REPOSITORY}/contents/{prefix}/health.json?ref={ref}"], as_json=True)
         health = json.loads(base64.b64decode("".join(health_meta["content"].split()), validate=True))
+        if not health.get("published"):
+            health = health.get("last_good_publication", {})
         if not health.get("published") or not gate(nodes, allow_partial=health.get("manual_publication") is True, limits=validate_limits(health.get("publication_limits"))):
             raise CloudError("云端结果不满足自动发布门槛，也不是已确认的手动发布名单")
     # The JSON array order is the published order. Never sort historical nodes by fresh local values.

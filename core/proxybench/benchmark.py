@@ -160,7 +160,7 @@ class Benchmark:
         concurrency = min(rules["delay_concurrency"], 24) if rules.get("adaptive_concurrency") else rules["delay_concurrency"]
         self.update(stage="复用代理连接，快速测量三个网站", status="Running", effective_concurrency=concurrency)
         for record in records.values():
-            record.update(probe_method="named-proxy-persistent-head-v1", latency_targets={site: url for site, url, _ in self.sites})
+            record.update(probe_method="named-proxy-persistent-http-v2", latency_targets={site: url for site, url, _ in self.sites})
         def worker(name):
             record = records[name]
             for site, url, expected in self.sites:
@@ -173,6 +173,9 @@ class Benchmark:
                         if failures / (rules["round_count"] * 3) * 100 > rules["max_proxy_loss_percent"]:
                             record["skip_reason"] = "前序请求失败，已无法满足成功率门槛"
                         self.update(candidates=list(records.values()))
+                    if len(record["probes"][site]) < rules["round_count"] and not record.get("skip_reason") and rules["round_cooldown_seconds"]:
+                        self.control.checkpoint()
+                        time.sleep(rules["round_cooldown_seconds"])
                 if not record.get("skip_reason"):
                     self.manager.controller.site_samples(name, url, expected, rules["request_timeout_seconds"], rules["round_count"],
                                                          checkpoint=self.control.checkpoint, observed=observed, should_stop=lambda: bool(record.get("skip_reason")))

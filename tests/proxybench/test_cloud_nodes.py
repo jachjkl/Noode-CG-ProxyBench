@@ -13,6 +13,21 @@ from tests.proxybench import test_dashboard_pages, test_publication_controller
 
 
 class CloudNodesTests(unittest.TestCase):
+    def test_failed_replenishment_keeps_the_last_confirmed_partial_publication_readable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            records = [*test_publication_controller.winners()[:3], *test_publication_controller.winners()[100:102]]
+            publish(root / "output", records, {"manual_publication": True})
+            for _ in range(2):
+                publish(root / "output", [], {"status": "needs_more", "publication_limits": {"general": 300, "japan": 10}})
+            content = (root / "output/nodes.json").read_bytes()
+            health = (root / "output/health.json").read_bytes()
+            client = Mock(settings={"state_dir": root})
+            client.command.side_effect = ["a" * 40, {"content": base64.b64encode(content).decode()}, {"content": base64.b64encode(health).decode()}]
+            with patch("core.proxybench.cloud_nodes.download", side_effect=lambda dest, *a, **k: dest.write_bytes(content)):
+                result = read_published(client)
+            self.assertEqual((result["total"], result["general"], result["japan"]), (5, 3, 2))
+
     def test_large_cloud_file_uses_trusted_git_blob_when_contents_api_has_no_inline_base64(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

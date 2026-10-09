@@ -22,6 +22,7 @@ class PersistentProxyTests(unittest.TestCase):
         connection = Mock()
         connection.sock.getsockname.return_value = ("127.0.0.1", 1234)
         connection.getresponse.return_value = Mock(status=200)
+        connection.getresponse.return_value.read.return_value = b"colo=SJC\nip=192.0.2.1\n"
         return controller, connection
 
     def test_one_warmup_then_five_timed_heads_share_one_named_proxy_connection(self):
@@ -30,11 +31,11 @@ class PersistentProxyTests(unittest.TestCase):
         clock = iter([0, .1, 1, 1.15, 2, 2.2, 3, 3.25, 4, 4.3])
         with patch("core.proxybench.controller.http.client.HTTPSConnection", return_value=connection) as constructor, \
              patch("core.proxybench.controller.time.perf_counter", side_effect=lambda: next(clock)):
-            controller.site_samples("PB-1", "https://www.cloudflare.com/cdn-cgi/trace", "200", 3, 5,
+            controller.site_samples("PB-1", "https://github.com/", "200", 3, 5,
                                     checkpoint=lambda: None, observed=rows.append, should_stop=lambda: False)
         constructor.assert_called_once()
         self.assertEqual(constructor.call_args.args, ("127.0.0.1", 3456))
-        connection.set_tunnel.assert_called_once_with("www.cloudflare.com", 443)
+        connection.set_tunnel.assert_called_once_with("github.com", 443)
         connection.connect.assert_called_once()
         self.assertEqual(connection.request.call_count, 6)
         self.assertTrue(all(call.args[0] == "HEAD" for call in connection.request.call_args_list))
@@ -93,11 +94,11 @@ class PersistentProxyTests(unittest.TestCase):
         connection.getresponse.return_value.status = 404
         rows = []
         with patch("core.proxybench.controller.http.client.HTTPSConnection", return_value=connection):
-            controller.site_samples("PB-1", "https://www.cloudflare.com/cdn-cgi/trace", "200", 3, 5,
+            controller.site_samples("PB-1", "https://github.com/", "200", 3, 5,
                                     checkpoint=lambda: None, observed=rows.append, should_stop=lambda: False)
         self.assertEqual(controller.delay.call_count, 5)
         self.assertEqual(connection.request.call_count, 1)
-        self.assertTrue(all(call.args == ("PB-1", "https://www.cloudflare.com/cdn-cgi/trace", "200", 3) for call in controller.delay.call_args_list))
+        self.assertTrue(all(call.args == ("PB-1", "https://github.com/", "200", 3) for call in controller.delay.call_args_list))
         self.assertTrue(all(r["success"] for r in rows))
 
     def test_warm_connection_failure_still_measures_remaining_allowed_attempts(self):
@@ -118,7 +119,7 @@ class PersistentProxyTests(unittest.TestCase):
                                     checkpoint=Mock(side_effect=Stopped()), observed=lambda _: None, should_stop=lambda: False)
         connection.close.assert_called_once()
 
-    def batch(self, values, *, failure=False, count=1):
+    def batch(self, values, *, failure=False, count=1, cooldown=0):
         manager = FakeManager()
         manager.controller.named_ports = {r["proxy_name"]: 123 for r in pool(count)}
         def samples(name, url, expected, timeout, attempts, *, checkpoint, observed, should_stop):
@@ -130,7 +131,7 @@ class PersistentProxyTests(unittest.TestCase):
         manager.controller.site_samples = Mock(side_effect=samples)
         updates = []
         with tempfile.TemporaryDirectory() as directory:
-            rows = Benchmark(manager, {**RULES, "max_proxy_average_latency_ms": 200}, Control(Path(directory)),
+            rows = Benchmark(manager, {**RULES, "max_proxy_average_latency_ms": 200, "round_cooldown_seconds": cooldown}, Control(Path(directory)),
                              geo_urls=[], update=lambda **v: updates.append(v)).batch(pool(count), object())
         return rows, manager, updates
 
@@ -140,14 +141,71 @@ class PersistentProxyTests(unittest.TestCase):
         self.assertEqual(rows[0]["proxy_average_latency_ms"], 200)
         self.assertEqual(rows[0]["proxy_probe_count"], 15)
         self.assertEqual(manager.controller.site_samples.call_count, 3)
-        self.assertEqual(rows[0]["probe_method"], "named-proxy-persistent-head-v1")
+        self.assertEqual(rows[0]["probe_method"], "named-proxy-persistent-http-v2")
         self.assertEqual(len(rows[0]["latency_targets"]), 3)
+
+    def test_nonzero_core_delay_is_rejected_when_expected_http_status_did_not_match(self):
+        controller = Controller(1, "fixture", 2)
+        url = "https://github.com/"
+        controller.call = Mock(side_effect=[{"delay": 90}, {"extra": {url: {"alive": False}}}])
+        self.assertFalse(controller.delay("PB-1", url, "200", 3)["success"])
+
+    def test_core_delay_passes_only_with_matching_expected_status_evidence(self):
+        controller = Controller(1, "fixture", 2)
+        url = "https://github.com/"
+        controller.call = Mock(side_effect=[{"delay": 90}, {"extra": {url: {"alive": True}}}])
+        self.assertEqual(controller.delay("PB-1", url, "200", 3)["latency_ms"], 90)
+
+    def test_cloudflare_trace_uses_get_and_validates_real_trace_body_for_all_five_samples(self):
+        controller, connection = self.controller()
+        rows = []
+        with patch("core.proxybench.controller.http.client.HTTPSConnection", return_value=connection):
+            controller.site_samples("PB-1", "https://www.cloudflare.com/cdn-cgi/trace", "200", 3, 5,
+                                    checkpoint=lambda: None, observed=rows.append, should_stop=lambda: False)
+        self.assertEqual(connection.request.call_count, 6)
+        self.assertTrue(all(call.args[0] == "GET" for call in connection.request.call_args_list))
+        self.assertTrue(all(r["success"] for r in rows))
+        controller.delay.assert_not_called()
+
+    def test_closed_trace_connection_falls_back_to_verified_get_not_invalid_head(self):
+        controller, connection = self.controller()
+        def warm():
+            connection.sock = None
+            response = Mock(status=200)
+            response.read.return_value = b"colo=SJC"
+            return response
+        connection.getresponse.side_effect = warm
+        controller.request = Mock(return_value={"success": True, "http_status": 200, "latency_ms": 190, "body": b"colo=SJC", "routing_proof": "connection-chain"})
+        rows = []
+        with patch("core.proxybench.controller.http.client.HTTPSConnection", return_value=connection):
+            controller.site_samples("PB-1", "https://www.cloudflare.com/cdn-cgi/trace", "200", 3, 5,
+                                    checkpoint=lambda: None, observed=rows.append, should_stop=lambda: False)
+        self.assertEqual(controller.request.call_count, 5)
+        controller.delay.assert_not_called()
+        self.assertTrue(all(r["success"] for r in rows))
+
+    def test_a_200_html_page_is_not_a_valid_cloudflare_trace(self):
+        controller, connection = self.controller()
+        connection.getresponse.return_value.read.return_value = b"<html>not a trace</html>"
+        rows = []
+        with patch("core.proxybench.controller.http.client.HTTPSConnection", return_value=connection):
+            controller.site_samples("PB-1", "https://www.cloudflare.com/cdn-cgi/trace", "200", 3, 5,
+                                    checkpoint=lambda: None, observed=rows.append, should_stop=lambda: bool(rows))
+        self.assertEqual(len(rows), 1)
+        self.assertFalse(rows[0]["success"])
 
     def test_240_ms_cannot_qualify_under_200_ms_or_start_download(self):
         rows, manager, _ = self.batch([240] * 5)
         self.assertFalse(rows[0]["qualified"])
         self.assertEqual(rows[0]["status"], "Rejected Latency")
         self.assertFalse(manager.controller.speed_calls)
+
+    def test_reused_connections_still_honor_the_saved_pause_between_observations(self):
+        with patch("core.proxybench.benchmark.time.sleep") as sleep:
+            rows, _, _ = self.batch([100] * 5, cooldown=.25)
+        self.assertTrue(rows[0]["qualified"])
+        self.assertEqual(sleep.call_count, 12)
+        self.assertTrue(all(call.args == (.25,) for call in sleep.call_args_list))
 
     def test_failed_candidates_end_early_without_serializing_every_bad_ip(self):
         rows, manager, updates = self.batch([100] * 5, failure=True, count=50)

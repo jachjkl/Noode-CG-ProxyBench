@@ -79,6 +79,9 @@ class Controller:
             delay = float(result["delay"])
             if delay < 0 or delay >= 65535:
                 raise ValueError
+            metadata = self.call(f"/proxies/{quote(name, safe='')}", timeout=timeout + 2)
+            if metadata.get("extra", {}).get(url, {}).get("alive") is not True:
+                raise ValueError  # A nonzero core delay alone does not prove the expected HTTP status.
             return {"success": True, "latency_ms": delay, "selected_proxy": name,
                     "destination": url, "routing_proof": "specified-proxy-controller-api", "expected_status": expected}
         except (CoreError, ValueError, KeyError, TypeError):
@@ -91,22 +94,38 @@ class Controller:
             raise RoutingError("Selected Proxy 不匹配")
 
     def site_samples(self, name: str, url: str, expected: str, timeout: float, count: int, *, checkpoint, observed, should_stop) -> None:
-        """Warm once and time HEAD headers on a verified candidate-specific TLS connection."""
+        """Warm once, then time verified HEAD/trace-GET headers on the named proxy."""
         destination = urlsplit(url)
         if destination.scheme != "https" or destination.username or destination.password or name not in self.named_ports:
             raise RoutingError("快速测试必须使用独立候选入站和 HTTPS")
         path = (destination.path or "/") + ("?" + destination.query if destination.query else "")
+        trace_get = destination.hostname == "www.cloudflare.com" and destination.path == "/cdn-cgi/trace"
         connection = http.client.HTTPSConnection("127.0.0.1", self.named_ports[name], timeout=timeout, context=make_ssl_context(True, "TLSv1.2"))
         connection.set_tunnel(destination.hostname, destination.port or 443)
         proof = {}
         bounds = [int(v) for v in expected.split("-")]
-        def head():
-            connection.request("HEAD", path, headers={"Host": destination.hostname, "User-Agent": "Go-http-client/1.1", "Connection": "keep-alive"})
+        def sample(timed=False):
+            started = time.perf_counter() if timed else 0
+            connection.request("GET" if trace_get else "HEAD", path, headers={"Host": destination.hostname, "User-Agent": "Go-http-client/1.1", "Connection": "keep-alive"})
             response = connection.getresponse()
             status = response.status
-            response.read()
+            latency = (time.perf_counter() - started) * 1000 if timed else None
+            body = response.read(65537) if trace_get else response.read()
             response.close()
-            return status
+            if trace_get and (len(body) > 65536 or b"colo=" not in body):
+                raise ValueError("Cloudflare trace 正文无效")
+            return status, latency
+        def original_sample():
+            if not trace_get:
+                return self.delay(name, url, expected, timeout)
+            try:
+                result = self.request(name, url, timeout=timeout)
+                if b"colo=" not in result["body"]:
+                    raise ValueError
+                return {**{k: v for k, v in result.items() if k != "body"}, "latency_ms": result["latency_ms"],
+                        "destination": url, "expected_status": expected}
+            except (OSError, ValueError, CoreError, RequestError):
+                return {"success": False, "latency_ms": None, "destination": url, "error": "Cloudflare trace 访问失败"}
         try:
             checkpoint()
             stage = "连接与 TLS"
@@ -115,7 +134,7 @@ class Controller:
                 stage = "指定代理路由验证"
                 proof = self._connection_proof(name, connection.sock.getsockname()[1])
                 stage = "网站预热"
-                warm_status = head()  # Same warm-response timing definition as Mihomo unified delay.
+                warm_status, _ = sample()  # Warm once; measured observations start afterwards.
                 core_timing = not bounds[0] <= warm_status <= bounds[-1]
             except (OSError, ValueError, http.client.HTTPException, CoreError) as exc:
                 observed({"success": False, "latency_ms": None, "selected_proxy": name, "destination": url,
@@ -125,7 +144,7 @@ class Controller:
                     checkpoint()
                     if should_stop():
                         break
-                    observed(self.delay(name, url, expected, timeout))
+                    observed(original_sample())
                 return
             for _ in range(count):
                 checkpoint()
@@ -133,12 +152,10 @@ class Controller:
                     return
                 if core_timing or connection.sock is None:
                     # Endpoint-incompatible warmup or closed HEAD connections keep original core timing.
-                    observed(self.delay(name, url, expected, timeout))
+                    observed(original_sample())
                     continue
-                started = time.perf_counter()
                 try:
-                    status = head()
-                    latency = (time.perf_counter() - started) * 1000
+                    status, latency = sample(timed=True)
                     passed = bounds[0] <= status <= bounds[-1]
                     observed({**proof, "success": passed, "latency_ms": latency if passed else None,
                               "destination": url, "http_status": status, "expected_status": expected,
@@ -211,7 +228,7 @@ class Controller:
                 raise RequestError("HTTP Body", received, "UnexpectedStatusOrIncompleteBody", proof)
             elapsed = max(total - ttfb, 0.000001)
             return {**proof, "success": True, "http_status": status, "received_bytes": received,
-                    "seconds": elapsed, "speed_mbps": received * 8 / elapsed / 1_000_000 if wanted_bytes else None,
+                    "seconds": elapsed, "latency_ms": ttfb * 1000, "speed_mbps": received * 8 / elapsed / 1_000_000 if wanted_bytes else None,
                     "body": open(temporary, "rb").read() if wanted_bytes is None else b""}
         finally:
             if process is not None and process.poll() is None:

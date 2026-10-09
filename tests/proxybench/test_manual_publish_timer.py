@@ -165,7 +165,7 @@ class ManualPublishTimerTests(unittest.TestCase):
             nodes = pool(4)
             pipeline.store.state = {"phase": "scan", "cycle": 1, "session_id": "saved", "run_id": "saved",
                                     "profile_fingerprint": profile.fingerprint, "sources": {}, "pool": nodes,
-                                    "measurement_policy": "entry-proxy-v8-persistent-head",
+                                    "measurement_policy": "entry-proxy-v9-verified-trace-get",
                                     "results": {"104.16.0.1:443": {**nodes[0], "qualified": True, "proxy_average_latency_ms": 90}}}
             pipeline.store.commit()
             pipeline.store.save_partial({**nodes[1], "key": "104.16.0.2:443", "qualified": True, "proxy_average_latency_ms": 95})

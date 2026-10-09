@@ -28,7 +28,7 @@ from .profile import ProfileChanged, ProxyProfile, refresh_existing, safe_error
 from .settings import current_rules
 from .state import Control, RunLock, Stopped, Store
 
-PROXY_POLICY = "entry-proxy-v8-persistent-head"
+PROXY_POLICY = "entry-proxy-v9-verified-trace-get"
 
 
 def prepare(settings: dict, continuation: bool = False, session_id: str = "", reuse: bool = False) -> dict:
