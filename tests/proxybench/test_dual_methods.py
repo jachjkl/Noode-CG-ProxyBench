@@ -65,7 +65,7 @@ class DualMethodTests(unittest.TestCase):
             self.assertEqual(publication_limits(current_rules(proxy)),{"general":200,"japan":3})
             self.assertEqual(publication_limits(current_rules(direct)),{"general":300,"japan":20})
             self.assertNotEqual(proxy["state_dir"],direct["state_dir"])
-            self.assertEqual(direct["output_dir"],root/"output/Nodes-TCP")
+            self.assertEqual(direct["output_dir"],root.resolve()/"output/Nodes-TCP")
 
     def test_direct_tcp_measures_a_real_local_listener_three_times_without_proxy(self):
         async def scenario(root):
