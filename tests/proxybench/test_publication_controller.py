@@ -122,7 +122,7 @@ class PublicationControllerTests(unittest.TestCase):
     def test_direct_or_wrong_candidate_chain_is_invalid(self):
         controller = Controller(1, "not-a-real-secret", 2)
         for chains in (["DIRECT"], ["PB-2", "BENCHMARK-PROXY"]):
-            controller.call = lambda _: {"connections": [{"metadata": {"sourcePort": "123"}, "chains": chains, "rule": "InName"}]}
+            controller.call = lambda _, **kwargs: {"connections": [{"metadata": {"sourcePort": "123"}, "chains": chains, "rule": "InName"}]}
             with self.assertRaises(RoutingError):
                 controller._connection_proof("PB-1", 123)
 

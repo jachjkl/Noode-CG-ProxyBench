@@ -39,7 +39,7 @@ class LegacySpeedTests(unittest.TestCase):
         self.assertEqual(constructor.call_args.args, ("127.0.0.1", 9876))
         connection.set_tunnel.assert_called_once_with("speed.cloudflare.com", 443)
         controller.select.assert_called_once_with("PB-1")
-        controller._connection_proof.assert_called_once_with("PB-1", 1234)
+        controller._connection_proof.assert_called_once_with("PB-1", 1234, timeout=1.0)
         headers = connection.request.call_args.kwargs["headers"]
         self.assertEqual(headers["Host"], "speed.cloudflare.com")
         self.assertEqual(headers["Connection"], "close")

@@ -16,6 +16,8 @@ from urllib.parse import quote, urlencode, urlsplit
 from core.speed_test import _accepted_speed_mbps
 from core.tls_check import make_ssl_context
 
+from .network_deadline import SocketDeadline
+
 
 class CoreError(RuntimeError):
     pass
@@ -93,77 +95,46 @@ class Controller:
         if self.call("/proxies/BENCHMARK-PROXY").get("now") != name:
             raise RoutingError("Selected Proxy 不匹配")
 
-    def site_samples(self, name: str, url: str, expected: str, timeout: float, count: int, *, checkpoint, observed, should_stop) -> None:
-        """Warm once, then time verified HEAD/trace-GET headers on the named proxy."""
+    def site_probe(self, name: str, url: str, expected: str, timeout: float) -> dict:
+        """Exactly one request through a named rule inbound, with a total deadline."""
         destination = urlsplit(url)
         if destination.scheme != "https" or destination.username or destination.password or name not in self.named_ports:
-            raise RoutingError("快速测试必须使用独立候选入站和 HTTPS")
+            raise RoutingError("网站测试必须使用独立候选入站和 HTTPS")
+        trace = destination.path == "/cdn-cgi/trace"
         path = (destination.path or "/") + ("?" + destination.query if destination.query else "")
-        trace_get = destination.hostname == "www.cloudflare.com" and destination.path == "/cdn-cgi/trace"
         connection = http.client.HTTPSConnection("127.0.0.1", self.named_ports[name], timeout=timeout, context=make_ssl_context(True, "TLSv1.2"))
         connection.set_tunnel(destination.hostname, destination.port or 443)
+        end = time.monotonic() + timeout
         proof = {}
-        bounds = [int(v) for v in expected.split("-")]
-        def sample(timed=False):
-            started = time.perf_counter() if timed else 0
-            connection.request("GET" if trace_get else "HEAD", path, headers={"Host": destination.hostname, "User-Agent": "Go-http-client/1.1", "Connection": "keep-alive"})
-            response = connection.getresponse()
-            status = response.status
-            latency = (time.perf_counter() - started) * 1000 if timed else None
-            body = response.read(65537) if trace_get else response.read()
-            response.close()
-            if trace_get and (len(body) > 65536 or b"colo=" not in body):
-                raise ValueError("Cloudflare trace 正文无效")
-            return status, latency
-        def original_sample():
-            if not trace_get:
-                return self.delay(name, url, expected, timeout)
-            try:
-                result = self.request(name, url, timeout=timeout)
-                if b"colo=" not in result["body"]:
-                    raise ValueError
-                return {**{k: v for k, v in result.items() if k != "body"}, "latency_ms": result["latency_ms"],
-                        "destination": url, "expected_status": expected}
-            except (OSError, ValueError, CoreError, RequestError):
-                return {"success": False, "latency_ms": None, "destination": url, "error": "Cloudflare trace 访问失败"}
+        stage = "连接与 TLS"
         try:
-            checkpoint()
-            stage = "连接与 TLS"
-            try:
+            with SocketDeadline(connection, timeout) as deadline:
                 connection.connect()
+                transport = connection.sock
+                deadline.watch(transport)
                 stage = "指定代理路由验证"
-                proof = self._connection_proof(name, connection.sock.getsockname()[1])
-                stage = "网站预热"
-                warm_status, _ = sample()  # Warm once; measured observations start afterwards.
-                core_timing = not bounds[0] <= warm_status <= bounds[-1]
-            except (OSError, ValueError, http.client.HTTPException, CoreError) as exc:
-                observed({"success": False, "latency_ms": None, "selected_proxy": name, "destination": url,
-                          "error": "候选代理连接、握手或网站预热失败", "expected_status": expected,
-                          "error_category": type(exc).__name__, "failure_stage": stage})
-                for _ in range(count - 1):
-                    checkpoint()
-                    if should_stop():
-                        break
-                    observed(original_sample())
-                return
-            for _ in range(count):
-                checkpoint()
-                if should_stop():
-                    return
-                if core_timing or connection.sock is None:
-                    # Endpoint-incompatible warmup or closed HEAD connections keep original core timing.
-                    observed(original_sample())
-                    continue
-                try:
-                    status, latency = sample(timed=True)
-                    passed = bounds[0] <= status <= bounds[-1]
-                    observed({**proof, "success": passed, "latency_ms": latency if passed else None,
-                              "destination": url, "http_status": status, "expected_status": expected,
-                              "connection_reused": True, "error": "" if passed else "网站状态不符合要求"})
-                except (OSError, ValueError, http.client.HTTPException):
-                    observed({**proof, "success": False, "latency_ms": None, "destination": url,
-                              "expected_status": expected, "error": "网站请求超时或连接中断"})
-                    connection.close()
+                proof = self._connection_proof(name, transport.getsockname()[1], timeout=max(.001, min(1.0, timeout, end - time.monotonic())))
+                deadline.check()
+                transport.settimeout(max(.001, end - time.monotonic()))
+                stage = "网站响应"
+                started = time.perf_counter()
+                connection.request("GET" if trace else "HEAD", path, headers={"Host": destination.hostname, "User-Agent": "Go-http-client/1.1", "Connection": "close"})
+                response = connection.getresponse()
+                latency = (time.perf_counter() - started) * 1000
+                status = response.status
+                body = response.read(65537) if trace else b""
+                response.close()
+                deadline.check()
+                if time.monotonic() > end:
+                    raise TimeoutError
+                bounds = [int(v) for v in expected.split("-")]
+                passed = bounds[0] <= status <= bounds[-1] and (not trace or len(body) <= 65536 and b"colo=" in body)
+                return {**proof, "success": passed, "latency_ms": latency if passed else None, "http_status": status,
+                        "destination": url, "expected_status": expected, "request_count": 1,
+                        "error": "" if passed else "网站状态或响应正文不符合要求"}
+        except (OSError, ValueError, http.client.HTTPException, CoreError):
+            return {**proof, "success": False, "latency_ms": None, "destination": url, "expected_status": expected,
+                    "error": "候选代理连接或网站响应失败／超时", "failure_stage": stage, "request_count": 1}
         finally:
             connection.close()
 
@@ -173,9 +144,13 @@ class Controller:
         self.select(name)
         return self.mixed_port
 
-    def _connection_proof(self, name: str, source_port: int) -> dict:
+    def _connection_proof(self, name: str, source_port: int, *, timeout: float = 1.0) -> dict:
+        deadline = time.monotonic() + timeout
         for _ in range(8):
-            for connection in (self.call("/connections").get("connections") or []):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            for connection in (self.call("/connections", timeout=min(.2, remaining, timeout)).get("connections") or []):
                 if str(connection.get("metadata", {}).get("sourcePort")) != str(source_port):
                     continue
                 chains = connection.get("chains", [])
@@ -183,7 +158,7 @@ class Controller:
                     raise RoutingError("Benchmark 请求路由无效")
                 return {"routing_proof": "connection-chain", "selected_proxy": name, "chains": chains,
                         "rule": connection["rule"], "rule_payload": connection.get("rulePayload", "")}
-            time.sleep(0.025)
+            time.sleep(max(0, min(.025, deadline - time.monotonic())))
         raise RoutingError("无法确认 Benchmark 连接实际出站")
 
     def request(self, name: str, url: str, *, timeout: float, wanted_bytes: int | None = None) -> dict:
@@ -212,11 +187,13 @@ class Controller:
             deadline = time.monotonic() + timeout
             while process.poll() is None and time.monotonic() < deadline:
                 try:
-                    proof = self._connection_proof(name, source_port)
+                    proof = self._connection_proof(name, source_port, timeout=max(.001, min(1.0, deadline - time.monotonic())))
                     break
                 except RoutingError:
                     continue
-            stdout, _stderr = process.communicate(timeout=max(0.1, deadline - time.monotonic()) + 1)
+            stdout, _stderr = process.communicate(timeout=max(.001, deadline - time.monotonic()))
+            if time.monotonic() > deadline:
+                raise RequestError("Proxy Request Deadline", os.path.getsize(temporary), "TimeoutError", proof)
             if not proof:
                 raise RoutingError("请求缺少指定 Candidate 的连接链证据")
             values = stdout.decode("ascii", errors="replace").strip().split()
@@ -250,10 +227,13 @@ class Controller:
         received = 0
         proof = {}
         try:
-            connection.connect()
-            transport = connection.sock
-            stage = "Routing Verification"
-            proof = self._connection_proof(name, transport.getsockname()[1])
+            with SocketDeadline(connection, timeout) as connect_budget:
+                connection.connect()
+                transport = connection.sock
+                connect_budget.watch(transport)
+                stage = "Routing Verification"
+                proof = self._connection_proof(name, transport.getsockname()[1], timeout=min(1.0, timeout))
+                connect_budget.check()
             transport.settimeout(timeout)
             path = destination.path or "/"
             if destination.query:
@@ -264,8 +244,11 @@ class Controller:
                                "Accept-Encoding": "identity", "Connection": "close"}
             if destination.hostname != "speed.cloudflare.com":
                 headers["Range"] = f"bytes=0-{wanted_bytes - 1}"
-            connection.request("GET", path, headers=headers)
-            response = connection.getresponse()
+            with SocketDeadline(connection, timeout) as header_budget:
+                header_budget.watch(transport)
+                connection.request("GET", path, headers=headers)
+                response = connection.getresponse()
+                header_budget.check()
             if response.status not in {200, 206}:
                 raise ValueError("Benchmark endpoint 状态异常")
             if response.status == 206:
@@ -275,16 +258,21 @@ class Controller:
             stage = "HTTP Body"
             started = time.perf_counter()
             deadline = started + maximum_download_seconds
-            while received < wanted_bytes:
-                remaining = deadline - time.perf_counter()
-                if remaining <= 0:
-                    raise TimeoutError
-                transport.settimeout(min(timeout, remaining))
-                chunk = response.read(min(65536, wanted_bytes - received))
-                if not chunk:
-                    break
-                received += len(chunk)
+            with SocketDeadline(connection, maximum_download_seconds) as body_budget:
+                body_budget.watch(transport)
+                while received < wanted_bytes:
+                    remaining = deadline - time.perf_counter()
+                    if remaining <= 0:
+                        raise TimeoutError
+                    transport.settimeout(min(timeout, remaining))
+                    chunk = response.read(min(65536, wanted_bytes - received))
+                    if not chunk:
+                        break
+                    received += len(chunk)
+                body_budget.check()
             elapsed = max(time.perf_counter() - started, 0.001)
+            if elapsed > maximum_download_seconds:
+                raise TimeoutError
             speed = _accepted_speed_mbps(received, wanted_bytes, elapsed, minimum_completion_ratio)
             if speed is None:
                 raise ValueError("测速正文不完整")

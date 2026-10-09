@@ -40,6 +40,8 @@ class BenchDashboard:
         self.lock = threading.RLock()
         self.log_handle = None
         self.file_cache = {}
+        self.checkpoint_identity = None
+        self.checkpoint_view = {}
         self.preserve_on_close = False
         self.explicit_stop = False
         self.recovery_pending = False
@@ -108,6 +110,20 @@ class BenchDashboard:
         self.file_cache[path] = (identity, value)
         return value
 
+    def checkpoint_snapshot(self) -> dict:
+        pointer = self.settings["state_dir"] / "batch-state.json"
+        if not pointer.exists():
+            self.checkpoint_identity = None
+            self.checkpoint_view = {}
+            return {}
+        stat = pointer.stat()
+        identity = (stat.st_mtime_ns, stat.st_size)
+        if identity != self.checkpoint_identity:
+            from .state import Store
+            self.checkpoint_view = Store(self.settings["state_dir"]).load()
+            self.checkpoint_identity = identity
+        return self.checkpoint_view
+
     def rows(self, kind: str, page: int) -> dict:
         if page < 1:
             raise ValueError("页码必须大于零")
@@ -131,8 +147,7 @@ class BenchDashboard:
             if row.get("qualified") and (failure := limit_failure(row, saved_rules)):
                 measured[key] = {**row, "qualified": False, "status": failure}
         if kind == "competition-results":
-            from .state import Store
-            state = Store(settings["state_dir"]).load()
+            state = self.checkpoint_snapshot()
             rows = [*state.get("general_results", {}).values(), *state.get("jp_results", {}).values()]
             if live.get("phase") in {"general_retest", "jp_retest"}:
                 staged = {f"{row['ip']}:{row['port']}": row for row in rows}
@@ -229,6 +244,7 @@ class BenchDashboard:
         with self.lock:
             timing = {**self.clock.snapshot(running, control.get("action") == "pause"),
                       "software_seconds": max(0.0, time.monotonic() - self.opened_at)}
+        live = {key: value for key, value in live.items() if key != "candidates"}
         return {"live": live, "profile": profile, "rules": current_rules(settings), "published": health,
                 "timing": timing,
                 "running": running,
@@ -251,7 +267,7 @@ class BenchDashboard:
                 allowed = {"ip", "port", "rank", "lane", "qualified", "geo_country", "country", "entry_latency_ms", "proxy_average_latency_ms", "proxy_download_average_mbps",
                            "proxy_loss_percent", "latency_jitter_ms", "measurement_mode", "tcp_average_latency_ms", "tcp_loss_percent", "tcp_jitter_ms", "tls_average_latency_ms", "download_mbps", "city",
                            "tcp_rounds_ms", "tls_rounds_ms", "tls_enabled", "latency_probe", "latency_domain", "tls_loss_percent", "tls_jitter_ms", "rejection_reason", "google_rounds_ms", "cloudflare_rounds_ms", "github_rounds_ms",
-                           "google_average_ms", "cloudflare_average_ms", "github_average_ms"}
+                           "google_average_ms", "cloudflare_average_ms", "github_average_ms", "latency_method"}
                 return {"rows": [{key: value for key, value in row.items() if key in allowed} for row in nodes], "total": len(nodes)}
             running = bool(self.process and self.process.poll() is None) or owned_core_running(settings["runtime_dir"])
             if action == "resume-testing":

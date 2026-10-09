@@ -15,7 +15,7 @@ from tests.proxybench.test_benchmark import FakeManager, pool
 
 
 class FastSelectionTests(unittest.TestCase):
-    def test_failed_candidate_only_gets_one_actual_probe_while_other_nodes_finish_nine(self):
+    def test_every_candidate_attempts_all_three_websites_including_failed_candidates(self):
         manager = FakeManager()
         original = manager.controller.delay
         def delay(name, *arguments):
@@ -26,10 +26,10 @@ class FastSelectionTests(unittest.TestCase):
         manager.controller.delay = delay
         with tempfile.TemporaryDirectory() as directory:
             rows = Benchmark(manager, {**RULES, "round_cooldown_seconds": 0}, Control(Path(directory)), geo_urls=[]).batch(pool(10), object())
-        self.assertEqual(len(manager.controller.calls), 136)
-        self.assertEqual(rows[0]["proxy_probe_count"], 1)
+        self.assertEqual(len(manager.controller.calls), 30)
+        self.assertEqual(rows[0]["proxy_probe_count"], 3)
         self.assertFalse(rows[0]["qualified"])
-        self.assertTrue(all(row["qualified"] and row["proxy_probe_count"] == 15 for row in rows[1:]))
+        self.assertTrue(all(row["qualified"] and row["proxy_probe_count"] == 3 for row in rows[1:]))
 
     def test_good_entry_is_not_rejected_for_realistic_worker_end_to_end_response(self):
         manager = FakeManager()

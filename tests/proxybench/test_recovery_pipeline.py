@@ -40,7 +40,7 @@ class RecoveryPipelineTests(unittest.TestCase):
             pipeline.scan(pool(10), "results", {"default": object()})
             self.assertEqual(len(pipeline.store.state["results"]), 9)
             self.assertNotIn("PB-000001", {name for name, _, _ in manager.controller.calls})
-            self.assertEqual(len(manager.controller.calls), 135)
+            self.assertEqual(len(manager.controller.calls), 27)
 
     def test_rule_edits_are_used_in_next_batch(self):
         with tempfile.TemporaryDirectory() as directory:

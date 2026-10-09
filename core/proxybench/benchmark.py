@@ -6,7 +6,6 @@ import json
 import math
 import statistics
 import threading
-import time
 
 from .profile import safe_error
 from .settings import SITES, validate_rules
@@ -33,38 +32,30 @@ def limit_failure(result: dict, rules: dict) -> str:
         return "Rejected Latency"
     if result.get("proxy_download_average_mbps") is not None and result["proxy_download_average_mbps"] < rules["min_proxy_speed_mbps"]:
         return "Rejected Speed"
-    if result.get("latency_jitter_ms") is not None and result["latency_jitter_ms"] > rules.get("max_proxy_jitter_ms", 500):
-        return "Rejected Jitter"
-    if result.get("rules", {}).get("round_count", 5) < 5:
+    if result.get("rules", {}).get("round_count", 1) != 1:
         return "Retest Required"
     return ""
 
 
 def calculate(result: dict, rules: dict) -> None:
-    rounds = rules["round_count"]
     probes = result["probes"]
+    if any(len(probes[site]) != 1 for site, _, _ in SITES):
+        raise ValueError("单轮测试必须对三个网站各记录一次，不能缺测或重复")
     successes = sum(probe["success"] for values in probes.values() for probe in values)
     result["site_success_count"] = successes
-    result["proxy_loss_percent"] = 100 * (rounds * 3 - successes) / (rounds * 3)
+    result["proxy_loss_percent"] = 100 * (3 - successes) / 3
     for site, _, _ in SITES:
-        latencies = [probe["latency_ms"] for probe in probes[site]]
-        result[f"{site}_rounds_ms"] = latencies
-        values = [number if number is not None else rules["request_timeout_seconds"] * 1000 for number in latencies]
-        ordered = sorted(values)
-        retained = ordered[1:-1]
-        result[f"{site}_retained_ms"] = retained
-        result[f"{site}_discarded_ms"] = [ordered[0], ordered[-1]]
-        result[f"{site}_average_ms"] = statistics.fmean(retained)
-    averages = [statistics.fmean(result["probes"][site][index]["latency_ms"]
-                                if result["probes"][site][index]["success"] else rules["request_timeout_seconds"] * 1000
-                                for site, _, _ in SITES) for index in range(rounds)]
-    result["round_averages_ms"] = averages
-    result["proxy_average_latency_ms"] = statistics.fmean(result[f"{site}_average_ms"] for site, _, _ in SITES)
-    result["latency_method"] = "per-site-trim-one-low-and-high-v1"
-    result["latency_jitter_ms"] = statistics.pstdev(averages)
-    result["latency_variance"] = statistics.pvariance(averages)
-    result["stability_score"] = 100 / (1 + result["latency_jitter_ms"])
-    result["latency_passed"] = result["proxy_loss_percent"] <= rules["max_proxy_loss_percent"] and result["proxy_average_latency_ms"] <= rules["max_proxy_average_latency_ms"] and result["latency_jitter_ms"] <= rules.get("max_proxy_jitter_ms", 500)
+        latency = probes[site][0]["latency_ms"]
+        value = latency if latency is not None else rules["request_timeout_seconds"] * 1000
+        result[f"{site}_rounds_ms"] = [latency]
+        result[f"{site}_retained_ms"] = [value]
+        result[f"{site}_discarded_ms"] = []
+        result[f"{site}_average_ms"] = value
+    average = statistics.fmean(result[f"{site}_average_ms"] for site, _, _ in SITES)
+    result.update(proxy_average_latency_ms=average, round_averages_ms=[average],
+                  latency_method="one-round-three-site-mean-v2", latency_jitter_ms=0.0,
+                  latency_variance=0.0, stability_score=None)
+    result["latency_passed"] = result["proxy_loss_percent"] <= rules["max_proxy_loss_percent"] and average <= rules["max_proxy_average_latency_ms"]
 
 
 class Benchmark:
@@ -111,77 +102,39 @@ class Benchmark:
         rules = self.rules
         records = {item["proxy_name"]: {**copy.deepcopy(item), "measurement_mode": "proxy", "key": f"{item['ip']}:{item['port']}",
                    "probes": {site: [] for site, _, _ in SITES}, "qualified": False,
-                   "download_rounds_mbps": [], "rules": rules, "status": "Loading Proxy"} for item in candidates}
-        names = list(records)
-        if callable(getattr(self.manager.controller, "site_samples", None)) and getattr(self.manager.controller, "named_ports", None):
-            self.persistent_site_batch(records)
-            return self.finish_measurements(records, completed)
-        effective_concurrency = min(rules["delay_concurrency"], 24) if rules.get("adaptive_concurrency") else rules["delay_concurrency"]
-        with concurrent.futures.ThreadPoolExecutor(max_workers=rules["delay_concurrency"]) as executor:
-            for round_index in range(rules["round_count"]):
-                for site, url, expected in self.sites:
-                    self.control.checkpoint()
-                    for record in records.values():
-                        record["status"] = f"Round {round_index + 1}"
-                        record.update(active_site=site, active_round=round_index + 1)
-                    self.update(stage=f"Round {round_index + 1}: {site}", candidates=list(records.values()))
-                    pending = [name for name in names if not records[name].get("skip_reason")]
-                    for offset in range(0, len(pending), effective_concurrency):
-                        self.control.checkpoint()
-                        futures = {executor.submit(self.manager.controller.delay, name, url, expected,
-                                                   rules["request_timeout_seconds"]): name
-                                   for name in pending[offset:offset + effective_concurrency]}
-                        for future in concurrent.futures.as_completed(futures):
-                            name = futures[future]
-                            probe = future.result()
-                            records[name]["probes"][site].append(probe)
-                            seen = [item for values in records[name]["probes"].values() for item in values]
-                            if sum(not item["success"] for item in seen) / (rules["round_count"] * 3) * 100 > rules["max_proxy_loss_percent"]:
-                                records[name]["skip_reason"] = "前序请求失败，已无法满足成功率门槛"
-                            self.update(candidates=list(records.values()))
-                    if rules.get("adaptive_concurrency") and pending:
-                        successes = sum(records[name]["probes"][site][-1]["success"] for name in pending)
-                        latencies = [records[name]["probes"][site][-1]["latency_ms"] for name in pending if records[name]["probes"][site][-1]["success"]]
-                        if successes / len(pending) < .7 and latencies and statistics.median(latencies) > rules["request_timeout_seconds"] * 600:
-                            effective_concurrency = max(1, effective_concurrency // 2)
-                        self.update(effective_concurrency=effective_concurrency)
-                    for name in names:
-                        if len(records[name]["probes"][site]) <= round_index:
-                            records[name]["probes"][site].append({"success": False, "latency_ms": None, "skipped": True,
-                                                                 "error": records[name].get("skip_reason", "提前结束")})
-                if round_index + 1 < rules["round_count"]:
-                    time.sleep(rules["round_cooldown_seconds"])
-        return self.finish_measurements(records, completed)
-
-    def persistent_site_batch(self, records: dict) -> None:
-        rules = self.rules
+                   "download_rounds_mbps": [], "rules": rules, "status": "Loading Proxy",
+                   "probe_method": "named-proxy-single-http-v3", "latency_targets": {site: url for site, url, _ in self.sites}} for item in candidates}
+        self.update(stage="单轮测试三个网站", status="Running", batch_input_count=len(records),
+                    batch_probe_completed=0, batch_probe_total=len(records) * 3, batch_latency_completed=0)
         concurrency = min(rules["delay_concurrency"], 24) if rules.get("adaptive_concurrency") else rules["delay_concurrency"]
-        self.update(stage="复用代理连接，快速测量三个网站", status="Running", effective_concurrency=concurrency)
-        for record in records.values():
-            record.update(probe_method="named-proxy-persistent-http-v2", latency_targets={site: url for site, url, _ in self.sites})
+        counters = {"probes": 0, "latency": 0}
         def worker(name):
             record = records[name]
             for site, url, expected in self.sites:
                 self.control.checkpoint()
-                def observed(probe):
-                    with self.activity_lock:
-                        record["probes"][site].append(probe)
-                        record.update(status=f"Round {len(record['probes'][site])}", active_site=site, active_round=len(record["probes"][site]))
-                        failures = sum(not p["success"] for samples in record["probes"].values() for p in samples)
-                        if failures / (rules["round_count"] * 3) * 100 > rules["max_proxy_loss_percent"]:
-                            record["skip_reason"] = "前序请求失败，已无法满足成功率门槛"
-                        self.update(candidates=list(records.values()))
-                    if len(record["probes"][site]) < rules["round_count"] and not record.get("skip_reason") and rules["round_cooldown_seconds"]:
-                        self.control.checkpoint()
-                        time.sleep(rules["round_cooldown_seconds"])
-                if not record.get("skip_reason"):
-                    self.manager.controller.site_samples(name, url, expected, rules["request_timeout_seconds"], rules["round_count"],
-                                                         checkpoint=self.control.checkpoint, observed=observed, should_stop=lambda: bool(record.get("skip_reason")))
                 with self.activity_lock:
-                    while len(record["probes"][site]) < rules["round_count"]:
-                        record["probes"][site].append({"success": False, "latency_ms": None, "skipped": True,
-                                                      "error": record.get("skip_reason", "连接未完成，剩余请求未测")})
-            return record
+                    record.update(status="Round 1", active_site=site, active_round=1)
+                    self.update(candidates=list(records.values()))
+                probe_method = getattr(self.manager.controller, "site_probe", None)
+                probe = (probe_method if callable(probe_method) else self.manager.controller.delay)(name, url, expected, rules["request_timeout_seconds"])
+                with self.activity_lock:
+                    record["probes"][site].append(probe)
+                    record.update(status="Round 1", active_site=site, active_round=1)
+                    counters["probes"] += 1
+                    self.update(candidates=list(records.values()), batch_probe_completed=counters["probes"],
+                                batch_latency_completed=counters["latency"])
+            with self.activity_lock:
+                calculate(record, rules)
+                record["proxy_probe_count"] = 3
+                record["status"] = "Latency Passed" if record["latency_passed"] else "Rejected Loss" if record["proxy_loss_percent"] > rules["max_proxy_loss_percent"] else "Rejected Latency"
+                if not record["latency_passed"]:
+                    failed = [site for site, _, _ in self.sites if not record["probes"][site][0]["success"]]
+                    record["rejection_reason"] = (f"三站平均 {record['proxy_average_latency_ms']:.2f} 毫秒，上限 {rules['max_proxy_average_latency_ms']:g} 毫秒；"
+                                                  f"请求失败率 {record['proxy_loss_percent']:.2f}%，上限 {rules['max_proxy_loss_percent']:g}%；"
+                                                  f"每站总超时 {rules['request_timeout_seconds']:g} 秒" + ("；失败网站：" + "、".join(failed) if failed else ""))
+                    self.finish(record, completed)
+                counters["latency"] += 1
+                self.update(candidates=list(records.values()), batch_latency_completed=counters["latency"], batch_probe_completed=counters["probes"])
         names = list(records)
         with concurrent.futures.ThreadPoolExecutor(max_workers=rules["delay_concurrency"]) as executor:
             offset = 0
@@ -189,14 +142,21 @@ class Benchmark:
                 self.control.checkpoint()
                 group = names[offset:offset + concurrency]
                 offset += len(group)
-                for future in concurrent.futures.as_completed([executor.submit(worker, name) for name in group]):
-                    future.result()
+                futures = [executor.submit(worker, name) for name in group]
+                try:
+                    for future in concurrent.futures.as_completed(futures):
+                        future.result()
+                except BaseException:
+                    for future in futures:
+                        future.cancel()
+                    raise
                 if rules.get("adaptive_concurrency"):
-                    success = sum(sum(p["success"] for samples in records[name]["probes"].values() for p in samples) for name in group)
-                    latencies = [p["latency_ms"] for name in group for samples in records[name]["probes"].values() for p in samples if p["success"]]
-                    if success / (len(group) * rules["round_count"] * 3) < .7 and latencies and statistics.median(latencies) > rules["request_timeout_seconds"] * 600:
+                    probes = [p for name in group for values in records[name]["probes"].values() for p in values]
+                    successful = [p["latency_ms"] for p in probes if p["success"]]
+                    if successful and len(successful) / len(probes) < .7 and statistics.median(successful) > rules["request_timeout_seconds"] * 600:
                         concurrency = max(1, concurrency // 2)
-                    self.update(effective_concurrency=concurrency)
+                self.update(effective_concurrency=concurrency)
+        return self.finish_measurements(records, completed)
 
     def finish_measurements(self, records: dict, completed) -> list[dict]:
         rules = self.rules
@@ -207,7 +167,8 @@ class Benchmark:
             result["proxy_probe_count"] = sum(not probe.get("skipped", False) for values in result["probes"].values() for probe in values)
             if not result["latency_passed"]:
                 result["status"] = "Rejected Loss" if result["proxy_loss_percent"] > rules["max_proxy_loss_percent"] else "Rejected Latency"
-                self.finish(result, completed)
+                if not result.get("tested_at"):
+                    self.finish(result, completed)
             else:
                 result["status"] = "Latency Passed"
                 pending_speed.append((name, result))

@@ -25,7 +25,7 @@ from .profile import ProfileChanged, ProxyProfile, refresh_existing, safe_error
 from .settings import BATCH_SIZE, current_rules
 from .state import Control, RunLock, Stopped, Store
 
-PROXY_POLICY = "proxy-v11-all-candidates"
+PROXY_POLICY = "proxy-v12-single-round-bounded"
 
 
 def prepare(settings: dict, continuation: bool = False, session_id: str = "", reuse: bool = False) -> dict:
@@ -86,6 +86,21 @@ class Pipeline:
 
     def update(self, **values) -> None:
         with self.update_lock:
+            if "batch_nodes" in values:
+                self.batch_visual_nodes = {row["key"]: dict(row) for row in values["batch_nodes"]}
+            visual = getattr(self, "batch_visual_nodes", {})
+            for row in values.get("candidates", []):
+                key = f"{row['ip']}:{row['port']}"
+                if key in visual:
+                    visual[key].update(status=row.get("status", "Queued"), completed=bool(row.get("tested_at")), qualified=bool(row.get("qualified")))
+            if "batch_finished_ip" in values:
+                key = values.pop("batch_finished_ip")
+                if key in visual:
+                    result = self.store.state.get(values.pop("batch_result_field"), {}).get(key, {})
+                    visual[key].update(status=result.get("status", ""), completed=True, qualified=bool(result.get("qualified")))
+            if visual or "batch_nodes" in values:
+                values.update(batch_nodes=list(visual.values()), batch_done=sum(row.get("completed", False) for row in visual.values()),
+                              batch_passed=sum(row.get("completed") and row.get("qualified") for row in visual.values()))
             changed = any(values.get(key) is not None and values[key] != self.status.get(key) for key in ("stage", "status"))
             self.status.update(values)
             if changed:
@@ -172,7 +187,9 @@ class Pipeline:
             remaining = remaining[BATCH_SIZE:]
             batch_number += 1
             self.update(batch_current=batch_number, batch_total=math.ceil(len(candidates) / BATCH_SIZE),
-                        batch_completed=batch_number - 1, stage=("TLS Testing" if rules["tls_enabled"] else "TCP Testing") if self.direct else "Loading Proxy", active_rules=rules)
+                        batch_completed=batch_number - 1, stage=("TLS Testing" if rules["tls_enabled"] else "TCP Testing") if self.direct else "Loading Proxy", active_rules=rules,
+                        batch_input_count=len(batch), batch_visual_phase="testing", batch_probe_completed=0, batch_probe_total=len(batch)*3,
+                        batch_nodes=[{"key": f"{row['ip']}:{row['port']}", "status": "Queued", "completed": False, "qualified": False} for row in batch])
             for attempt in range(3):
                 try:
                     batch = [item for item in batch if f"{item['ip']}:{item['port']}" not in processed]
@@ -187,6 +204,7 @@ class Pipeline:
                             processed[result["key"]] = bool(result.get("qualified"))
                             reason = result.get("rejection_reason", "")
                             self.events.append(f"{result['key']}：{chinese(result.get('status', ''))}" + (f"；{reason}" if reason else ""), level="info" if result.get("qualified") else "warning")
+                            self.update(batch_finished_ip=result["key"], batch_result_field=result_field)
                     if self.direct:
                         from .direct_benchmark import DirectBenchmark
                         DirectBenchmark(rules, self.control, self.update, domain=self.settings.get("direct_tls_domain", "www.cloudflare.com")).batch(batch, completed, reuse_tcp=False)
@@ -203,11 +221,13 @@ class Pipeline:
                     self.update(stage="代理内核连接异常，重启本软件内核并继续未完成的候选")
                     if attempt == 2:
                         raise
+            self.update(stage="清理本批缓存", batch_visual_phase="cleaning")
             self.compact_batch(result_field)
             self.store.commit()
             if not self.direct and hasattr(self.manager, "clear_batch"):
                 self.manager.clear_batch()
-            self.update(batch_completed=batch_number, candidates=[], speed_active=[])
+            self.update(stage="本批完成，缓存已清理", batch_completed=batch_number, candidates=[], speed_active=[],
+                        batch_visual_phase="reset", batch_nodes=[], batch_input_count=0, batch_probe_completed=0, batch_probe_total=0)
             self.events.append(f"第 {batch_number} 批已完成：保留合格结果，失败详情与临时缓存已清理；累计实测 {self.tested_count()} 个 IP")
 
     def new_pool(self, profile: ProxyProfile, handoff: bool) -> tuple[list[dict], dict]:

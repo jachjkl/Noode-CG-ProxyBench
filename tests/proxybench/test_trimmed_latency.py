@@ -4,66 +4,75 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.proxybench.benchmark import Benchmark, calculate
+from core.proxybench.benchmark import Benchmark, calculate, limit_failure
 from core.proxybench.settings import RULES, SITES, current_rules, validate_rules
 from core.proxybench.state import Control
 from tests.proxybench.test_benchmark import FakeManager, pool
 
 
-class TrimmedLatencyTests(unittest.TestCase):
+class OneRoundLatencyTests(unittest.TestCase):
     def record(self, values):
-        return {"probes": {site: [{"success": True, "latency_ms": number} for number in sample]
-                           for (site, _, _), sample in zip(SITES, values)}}
+        return {"probes": {site: [{"success": value is not None, "latency_ms": value}]
+                           for (site, _, _), value in zip(SITES, values)}}
 
-    def test_each_site_drops_one_low_and_high_then_three_means_are_averaged(self):
-        record = self.record(([1000, 90, 10, 110, 100], [20, 80, 90, 100, 2000], [30, 70, 80, 90, 3000]))
-        calculate(record, {**RULES, "max_proxy_jitter_ms": 10000})
-        self.assertEqual(record["google_retained_ms"], [90, 100, 110])
-        self.assertEqual(record["google_discarded_ms"], [10, 1000])
-        self.assertEqual([record[f"{site}_average_ms"] for site, _, _ in SITES], [100, 90, 80])
-        self.assertEqual(record["proxy_average_latency_ms"], 90)
+    def test_three_site_values_are_averaged_without_discarding_any_extreme(self):
+        record = self.record([100, 200, 300])
+        calculate(record, RULES)
+        self.assertEqual(record["proxy_average_latency_ms"], 200)
+        self.assertEqual(record["google_retained_ms"], [100])
+        self.assertEqual(record["google_discarded_ms"], [])
+        self.assertEqual(record["site_success_count"], 3)
+        self.assertEqual(record["latency_method"], "one-round-three-site-mean-v2")
         self.assertTrue(record["latency_passed"])
 
-    def test_repeated_extremes_drop_only_one_observation_each(self):
-        record = self.record(([10, 10, 10, 10, 1000],) * 3)
-        calculate(record, RULES)
-        self.assertEqual(record["google_retained_ms"], [10, 10, 10])
-        self.assertEqual(record["proxy_average_latency_ms"], 10)
-
-    def test_six_probes_keep_four_middle_values(self):
-        record = self.record(([1, 10, 20, 30, 40, 500],) * 3)
-        calculate(record, {**RULES, "round_count": 6})
-        self.assertEqual(record["google_retained_ms"], [10, 20, 30, 40])
-        self.assertEqual(record["proxy_average_latency_ms"], 25)
-
-    def test_discarding_timeout_from_latency_does_not_discard_request_failure(self):
-        record = self.record(([10, 80, 90, 100, 110],) * 3)
-        record["probes"]["github"][-1] = {"success": False, "latency_ms": None}
-        calculate(record, RULES)
-        self.assertGreater(record["proxy_loss_percent"], 0)
+    def test_single_slow_site_is_never_trimmed_away_to_fake_a_pass(self):
+        record = self.record([10, 10, 1000])
+        calculate(record, {**RULES, "max_proxy_average_latency_ms": 200})
+        self.assertEqual(record["proxy_average_latency_ms"], 340)
         self.assertFalse(record["latency_passed"])
 
-    def test_fewer_than_five_probes_cannot_be_saved_or_executed(self):
-        with self.assertRaises(ValueError):
-            validate_rules({"round_count": 4})
-        with tempfile.TemporaryDirectory() as directory:
+    def test_duplicate_or_missing_site_observations_are_rejected(self):
+        for values in ([], [{"success": True, "latency_ms": 10}] * 2):
+            record = self.record([100, 100, 100])
+            record["probes"]["github"] = values
             with self.assertRaises(ValueError):
-                Benchmark(FakeManager(), {**RULES, "round_count": 4}, Control(Path(directory)), geo_urls=[])
+                calculate(record, RULES)
 
-    def test_legacy_three_probe_settings_upgrade_only_count_to_new_minimum(self):
+    def test_timeout_is_failure_and_never_averaged_as_zero(self):
+        record = self.record([10, 20, None])
+        calculate(record, RULES)
+        self.assertEqual(record["proxy_loss_percent"], 100/3)
+        self.assertGreater(record["proxy_average_latency_ms"], 1000)
+        self.assertFalse(record["latency_passed"])
+
+    def test_legacy_round_counts_are_normalized_to_exactly_one(self):
+        for old in (1, 3, 4, 5, 6, 10):
+            self.assertEqual(validate_rules({"round_count": old})["round_count"], 1)
+        with self.assertRaises(ValueError):
+            validate_rules({"round_count": 0})
+
+    def test_saved_latency_rule_is_kept_while_only_batch_and_round_counts_change(self):
         with tempfile.TemporaryDirectory() as directory:
-            settings = {"rules": {**RULES, "round_count": 3, "max_proxy_average_latency_ms": 1500}, "rules_path": Path(directory) / "absent.json"}
+            settings = {"rules": {**RULES, "round_count": 5, "batch_size": 300, "max_proxy_average_latency_ms": 1500}, "rules_path": Path(directory) / "absent.json"}
             rules = current_rules(settings)
-        self.assertEqual(rules["round_count"], 5)
+        self.assertEqual(rules["round_count"], 1)
+        self.assertEqual(rules["batch_size"], 100)
         self.assertEqual(rules["max_proxy_average_latency_ms"], 1500)
 
-    def test_trimmed_240_ms_composite_still_cannot_qualify_under_200_ms_limit(self):
+    def test_240_ms_mean_fails_under_saved_200_ms_and_each_site_is_called_once(self):
         with tempfile.TemporaryDirectory() as directory:
             manager = FakeManager()
-            values = iter([1, 1, 1, 230, 230, 230, 240, 240, 240, 250, 250, 250, 1000, 1000, 1000])
-            manager.controller.delay = lambda *_: {"success": True, "latency_ms": next(values)}
-            record = Benchmark(manager, {**RULES, "max_proxy_average_latency_ms": 200, "round_cooldown_seconds": 0, "delay_concurrency": 1},
-                               Control(Path(directory)), geo_urls=[]).batch(pool(1), object())[0]
+            values = iter([230, 240, 250])
+            calls = []
+            def delay(*args):
+                calls.append(args)
+                return {"success": True, "latency_ms": next(values)}
+            manager.controller.delay = delay
+            record = Benchmark(manager, {**RULES, "max_proxy_average_latency_ms": 200}, Control(Path(directory)), geo_urls=[]).batch(pool(1), object())[0]
+        self.assertEqual(len(calls), 3)
         self.assertEqual(record["proxy_average_latency_ms"], 240)
         self.assertFalse(record["qualified"])
         self.assertFalse(manager.controller.speed_calls)
+
+    def test_old_five_round_cached_pass_requires_fresh_one_round_measurement(self):
+        self.assertEqual(limit_failure({"rules": {"round_count": 5}, "qualified": True}, RULES), "Retest Required")

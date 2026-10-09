@@ -17,6 +17,7 @@ class Observation:
         self.closed = False
         self.error = None
         self.last_progress = 0.0
+        self.results_since_progress = 0
         self.thread = threading.Thread(target=self.consume, name="benchmark-observer", daemon=True)
 
     def __enter__(self):
@@ -42,11 +43,13 @@ class Observation:
         while True:
             with self.condition:
                 self.condition.wait_for(lambda: self.results or self.latest is not None or self.closed)
-                if self.results:
-                    callback, value = self.on_completed, self.results.popleft()
-                elif self.latest is not None:
+                if self.latest is not None and (not self.results or self.results_since_progress >= 8):
                     callback, value = self.on_update, self.latest
                     self.latest = None
+                    self.results_since_progress = 0
+                elif self.results:
+                    callback, value = self.on_completed, self.results.popleft()
+                    self.results_since_progress += 1
                 elif self.closed:
                     return
             try:

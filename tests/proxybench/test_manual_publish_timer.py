@@ -46,7 +46,7 @@ class ManualPublishTimerTests(unittest.TestCase):
             self.assertTrue(result["published"])
             self.assertEqual(result["unique_final_count"], 1)
             self.assertEqual({ip for batch in manager.loads for ip in batch}, {"PB-COMP-000001"})
-            self.assertEqual(len(manager.controller.calls), 15)
+            self.assertEqual(len(manager.controller.calls), 3)
             self.assertTrue(list(settings["state_dir"].glob("previous-policy-*-results.json.gz")))
 
     def test_elapsed_pauses_resumes_survives_reopen_without_counting_downtime_and_resets(self):
@@ -78,7 +78,7 @@ class ManualPublishTimerTests(unittest.TestCase):
             (root / "config.yaml").write_text("proxybench: {}", encoding="utf-8")
             actual = current_rules(load_settings(root / "config.yaml"))
             self.assertEqual(actual, RULES)
-            self.assertEqual((actual["max_proxy_average_latency_ms"], actual["min_proxy_speed_mbps"], actual["round_count"], actual["batch_size"]), (300, 3.01, 5, 300))
+            self.assertEqual((actual["max_proxy_average_latency_ms"], actual["min_proxy_speed_mbps"], actual["round_count"], actual["batch_size"]), (300, 3.01, 1, 100))
 
     def test_stop_saves_without_queuing_publication_or_starting_a_process(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -128,7 +128,7 @@ class ManualPublishTimerTests(unittest.TestCase):
                 atomic_write_json(root / "publish-request.json", {"requested": True})
             pipeline.store.commit = queue_after_batch
             pipeline.scan(pool(301), "results", {"default": object()})
-            self.assertEqual(len(pipeline.store.state["results"]), 290)
+            self.assertEqual(len(pipeline.store.state["results"]), 100)
             self.assertEqual(len(pipeline.store.state["pool"]), 301)
 
     def test_manual_partial_results_cross_cloud_channel_but_automatic_partial_output_cannot(self):
@@ -176,7 +176,7 @@ class ManualPublishTimerTests(unittest.TestCase):
             self.assertEqual(pipeline.store.state["phase"], "scan")
             self.assertEqual({name for group in manager.loads for name in group}, {"PB-COMP-000001", "PB-COMP-000002"})
             records = json.loads((settings["output_dir"] / "nodes.json").read_text(encoding="utf-8"))
-            self.assertTrue(all(len(row[site + "_rounds_ms"]) == 5 for row in records for site in ("google", "cloudflare", "github")))
+            self.assertTrue(all(len(row[site + "_rounds_ms"]) == 1 for row in records for site in ("google", "cloudflare", "github")))
             manager.stop.assert_called()
 
     def test_controller_manual_publication_never_calls_cloud_discovery_and_confirms_push(self):

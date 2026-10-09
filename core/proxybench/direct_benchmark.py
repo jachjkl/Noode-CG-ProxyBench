@@ -94,13 +94,15 @@ class DirectBenchmark:
                   "tls_enabled": probe == "tls", "status": f"{probe.upper()} Testing"}
         node = NodeResult(ip=candidate["ip"], port=candidate["port"])
         values = []
+        if progress:
+            progress(record)
         for _ in range(3):
             await self.control.async_checkpoint()
             try:
                 if probe == "tcp":
-                    value = await tcp_probe(node, self.rules["tcp_timeout_seconds"])
+                    value = await asyncio.wait_for(tcp_probe(node, self.rules["tcp_timeout_seconds"]), timeout=self.rules["tcp_timeout_seconds"])
                 else:
-                    value, _version, _cipher = await tls_probe(node, self.domain, self.context, self.rules["tls_timeout_seconds"])
+                    value, _version, _cipher = await asyncio.wait_for(tls_probe(node, self.domain, self.context, self.rules["tls_timeout_seconds"]), timeout=self.rules["tls_timeout_seconds"])
             except (TimeoutError, OSError):
                 value = None
             values.append(value)
@@ -133,7 +135,8 @@ class DirectBenchmark:
 
         def show(record):
             records[record["key"]] = record
-            notify(stage=stage, candidates=list(records.values()), status="Running")
+            notify(stage=stage, candidates=list(records.values()), status="Running", batch_input_count=len(candidates),
+                   batch_probe_total=len(candidates)*3, batch_probe_completed=sum(len(row.get(f"{self.probe}_rounds_ms", [])) for row in records.values()))
 
         def finish(record):
             record.update(tested_at=datetime.now(UTC).isoformat())
@@ -172,8 +175,8 @@ class DirectBenchmark:
                 record["status"] = "Direct Location"
                 show(record)
                 try:
-                    status, headers, body, _ttfb = await _request(node, domain="www.cloudflare.com", path="/cdn-cgi/trace", context=self.context,
-                                                                 timeout=self.rules["tls_timeout_seconds"], user_agent="Noode-CG-ProxyBench/1.2.1")
+                    status, headers, body, _ttfb = await asyncio.wait_for(_request(node, domain="www.cloudflare.com", path="/cdn-cgi/trace", context=self.context,
+                                                                 timeout=self.rules["tls_timeout_seconds"], user_agent="Noode-CG-ProxyBench/1.2.5"), timeout=self.rules["tls_timeout_seconds"])
                     trace = _parse_trace(body)
                     colo = trace.get("colo", "").upper()
                     location = self.locations.get(colo, {})

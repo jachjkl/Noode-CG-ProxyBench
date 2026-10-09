@@ -108,21 +108,21 @@ class CoreVersionHistoryTests(unittest.TestCase):
                 manager.choose_version("v0.9.0")
             self.assertEqual({path.name: path.read_bytes() for path in root.iterdir()}, before)
 
-    def test_three_hundred_independent_rule_inbounds_and_batch_cleanup_only_touch_owned_controller(self):
+    def test_one_hundred_independent_rule_inbounds_and_batch_cleanup_only_touch_owned_controller(self):
         with tempfile.TemporaryDirectory() as directory:
             manager = MihomoManager(Path(directory))
             manager.controller = Controller(1234, "fixture", 2345)
             profile = Mock()
             profile.definition.side_effect = lambda ip, name: {"name": name, "type": "http", "server": ip, "port": 443}
-            config = manager.config(pool(300), profile)
-            self.assertEqual(len(config["proxies"]), 300)
-            self.assertEqual(len(config["listeners"]), 301)
-            self.assertEqual(len({row["port"] for row in config["listeners"]}), 301)
-            self.assertIn("IN-NAME,proxybench-node-299,PB-000300", config["rules"])
+            config = manager.config(pool(100), profile)
+            self.assertEqual(len(config["proxies"]), 100)
+            self.assertEqual(len(config["listeners"]), 101)
+            self.assertEqual(len({row["port"] for row in config["listeners"]}), 101)
+            self.assertIn("IN-NAME,proxybench-node-99,PB-000100", config["rules"])
             manager.process = Mock()
             manager.process.poll.return_value = None
             manager.controller.call = Mock()
-            manager.loaded = 300
+            manager.loaded = 100
             manager.clear_batch()
             self.assertEqual(manager.loaded, 0)
             self.assertEqual(manager.controller.named_ports, {})

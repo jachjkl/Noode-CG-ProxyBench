@@ -52,13 +52,13 @@ class FullCandidateBatchTests(unittest.TestCase):
                         # followed by failed measurements that must be removed.
                         qualified = len(observed) <= 600
                         callback({**row, "key": f"{row['ip']}:{row['port']}", "qualified": qualified,
-                                  "jp_qualified": qualified, "proxy_probe_count": 15,
+                                  "jp_qualified": qualified, "proxy_probe_count": 3,
                                   "status": "Qualified" if qualified else "Rejected Latency"})
                 with patch("socket.create_connection", side_effect=AssertionError("forbidden prefilter")), \
                      patch("core.proxybench.pipeline.Benchmark.batch", side_effect=measured), \
                      patch("core.proxybench.direct_benchmark.DirectBenchmark.batch", side_effect=measured):
                     pipeline.scan(pipeline.ordered_candidates(candidates), "results", {"default": object()})
-                self.assertEqual(batches, [300] * 66 + [200])
+                self.assertEqual(batches, [100] * 200)
                 self.assertEqual(len(observed), 20000)
                 self.assertEqual(len(set(observed)), 20000)
                 self.assertEqual(pipeline.tested_count(), 20000)
@@ -114,7 +114,7 @@ class FullCandidateBatchTests(unittest.TestCase):
                     saved.update(max_entry_latency_ms=1, entry_timeout_seconds=.01, entry_concurrency=512)
                 settings["rules_path"].write_text(json.dumps(saved), encoding="utf-8")
                 rules = current_rules(settings)
-                self.assertEqual(rules["batch_size"], 300)
+                self.assertEqual(rules["batch_size"], 100)
                 self.assertNotIn("quick_finish", rules)
                 self.assertNotIn("max_entry_latency_ms", rules)
                 self.assertNotIn("entry_concurrency", rules)
@@ -134,7 +134,7 @@ class FullCandidateBatchTests(unittest.TestCase):
                         raise CoreError("fixture controller restart")
             with patch("core.proxybench.pipeline.Benchmark.batch", side_effect=measured):
                 pipeline.scan(pool(300), "results", {})
-            self.assertEqual(calls, [300, 283])
+            self.assertEqual(calls, [100, 83, 100, 100])
             self.assertEqual(len(seen), len(set(seen)))
             self.assertEqual(pipeline.tested_count(), 300)
             self.assertEqual(pipeline.store.state["results"], {})

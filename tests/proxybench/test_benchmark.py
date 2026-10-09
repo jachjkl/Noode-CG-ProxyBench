@@ -50,19 +50,19 @@ def pool(count):
 
 
 class BenchmarkTests(unittest.TestCase):
-    def test_batch100_independent_nine_probes_and_barriers(self):
+    def test_batch100_independent_three_site_requests_before_download(self):
         manager = FakeManager()
         rules = {**RULES, "round_cooldown_seconds": 0}
         with tempfile.TemporaryDirectory() as directory:
             results = Benchmark(manager, rules, Control(Path(directory)), geo_urls=["https://ipwho.is/"]).batch(pool(100), object())
         self.assertEqual(len(manager.loads), 1)
         self.assertEqual(len(results), 100)
-        self.assertEqual(len(manager.controller.calls), 1500)
+        self.assertEqual(len(manager.controller.calls), 300)
         self.assertEqual(len({row["proxy_average_latency_ms"] for row in results}), 100)
-        for index in range(15):
-            chunk = manager.controller.calls[index * 100:(index + 1) * 100]
-            self.assertEqual(len({row[0] for row in chunk}), 100)
-            self.assertEqual({row[1] for row in chunk}, {SITES[index % 3][1]})
+        for name in manager.loads[0]:
+            calls = [call for call in manager.controller.calls if call[0] == name]
+            self.assertEqual(len(calls), 3)
+            self.assertEqual({call[1] for call in calls}, {site[1] for site in SITES})
         self.assertTrue(all(row["qualified"] and row["jp_qualified"] for row in results))
         self.assertTrue(all(len(row["download_rounds_mbps"]) == 1 for row in results))
         self.assertEqual(len(manager.controller.speed_calls), 100)
@@ -81,8 +81,8 @@ class BenchmarkTests(unittest.TestCase):
         manager.controller.delay = failing
         with tempfile.TemporaryDirectory() as directory:
             results = Benchmark(manager, {**RULES, "round_cooldown_seconds": 0}, Control(Path(directory)), geo_urls=[]).batch(pool(1), object())
-        self.assertEqual(results[0]["proxy_loss_percent"], 100)
-        self.assertEqual(results[0]["proxy_probe_count"], 1)
+        self.assertEqual(results[0]["proxy_loss_percent"], 100/3)
+        self.assertEqual(results[0]["proxy_probe_count"], 3)
         self.assertEqual(results[0]["status"], "Rejected Loss")
         self.assertEqual(results[0]["download_rounds_mbps"], [])
 
@@ -115,9 +115,9 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(sorted([fast_speed, fast_latency], key=ranking_key)[0], fast_latency)
 
     def test_exact_averages(self):
-        result = {"probes": {site: [{"success": True, "latency_ms": value}] * 5 for (site, _, _), value in zip(SITES, (90, 105, 120))}}
+        result = {"probes": {site: [{"success": True, "latency_ms": value}] for (site, _, _), value in zip(SITES, (90, 105, 120))}}
         calculate(result, RULES)
-        self.assertEqual(result["round_averages_ms"], [105] * 5)
+        self.assertEqual(result["round_averages_ms"], [105])
         self.assertEqual(result["proxy_average_latency_ms"], 105)
 
     def test_rules_reject_nan_unknown_and_unsafe_concurrency(self):

@@ -248,12 +248,13 @@ class DualMethodTests(unittest.TestCase):
             self.assertEqual([r["rank"] for r in rows], list(range(1, 208)))
             self.assertFalse((root / "output/nodes.txt").exists())
 
-    def test_new_proxy_jitter_rule_rejects_even_a_low_trimmed_average(self):
-        samples=[10,100,100,100,2000]
-        row={"probes":{site:[{"success":True,"latency_ms":v} for v in samples] for site in ["google","cloudflare","github"]}}
-        calculate(row,{**RULES,"max_proxy_jitter_ms":50})
-        self.assertEqual(row["proxy_average_latency_ms"],100)
-        self.assertFalse(row["latency_passed"])
+    def test_single_proxy_round_does_not_invent_temporal_jitter(self):
+        row={"probes":{site:[{"success":True,"latency_ms":value}] for site,value in zip(["google","cloudflare","github"],[100,200,300])}}
+        calculate(row,RULES)
+        self.assertEqual(row["proxy_average_latency_ms"],200)
+        self.assertEqual(row["latency_jitter_ms"],0)
+        self.assertIsNone(row["stability_score"])
+        self.assertTrue(row["latency_passed"])
 
     def test_mode_router_saves_two_presets_and_blocks_duplicate_cross_mode_tasks(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -330,7 +330,7 @@ class MihomoManager:
 
     def load_batch(self, candidates: list[dict], profile) -> None:
         if len(candidates) > BATCH_SIZE:
-            raise CoreError("一个内核每批最多加载 300 个候选")
+            raise CoreError("一个内核每批最多加载 100 个候选")
         if self.process is None or self.process.poll() is not None:
             self.start(candidates, profile)
         else:
