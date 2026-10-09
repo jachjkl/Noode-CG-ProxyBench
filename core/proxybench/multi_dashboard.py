@@ -57,6 +57,16 @@ class MultiModeDashboard:
             mode = payload.get("mode")
             if mode not in MODES:
                 raise ValueError("请选择有效测速方式")
+            if mode == "tcp_tls" and "probe" in payload:
+                if payload["probe"] not in {"tcp", "tls"}:
+                    raise ValueError("直连延迟只能选择 TCPing 或 TLS")
+                child = self.controllers[mode]
+                saved = current_rules(child.settings)
+                selected = int(payload["probe"] == "tls")
+                if saved["tls_enabled"] != selected:
+                    if self.active() == mode:
+                        raise ValueError("直连测速正在运行，请先停止并保存，再切换 TCPing 或 TLS")
+                    child.action("rules", {"tls_enabled": selected})
             self.mode = mode
             atomic_write_json(self.options, {"mode": mode})
             return {"selected": mode, "title": MODES[mode]}

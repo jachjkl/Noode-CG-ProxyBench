@@ -14,8 +14,9 @@ from .settings import SITES, validate_rules
 
 def ranking_key(result: dict) -> tuple:
     if result.get("measurement_mode") == "tcp_tls":
-        return (result.get("tcp_loss_percent", 100), result.get("tcp_average_latency_ms") or math.inf,
-                result.get("tcp_jitter_ms", math.inf), -result.get("download_mbps", 0), result["ip"], result["port"])
+        probe = result.get("latency_probe", "tls" if result.get("tls_enabled") else "tcp")
+        return (result.get(f"{probe}_loss_percent", 100), result.get(f"{probe}_average_latency_ms") or math.inf,
+                result.get(f"{probe}_jitter_ms", math.inf), -result.get("download_mbps", 0), result["ip"], result["port"])
     return (result.get("proxy_loss_percent", 100), -result.get("site_success_count", 0),
             result["proxy_average_latency_ms"] if result.get("proxy_average_latency_ms") is not None else math.inf, result.get("latency_jitter_ms", math.inf),
             -result.get("proxy_download_average_mbps", 0), result.get("entry_latency_ms", math.inf), result["ip"], result["port"])

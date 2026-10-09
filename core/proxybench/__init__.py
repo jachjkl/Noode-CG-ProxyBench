@@ -1,3 +1,3 @@
-"""Isolated, real proxy-environment benchmark. Legacy direct probes are not used."""
+"""Proxy website benchmarking and exclusive original TCPing or TLS probes."""
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"

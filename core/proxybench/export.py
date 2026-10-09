@@ -24,7 +24,7 @@ PUBLIC_FIELDS = {"ip", "port", "rank", "lane", "jp_hint", "geo_country", "geo_ve
                  "site_success_count", "latency_jitter_ms", "latency_variance", "qualified", "rules", "latency_method",
                  "google_retained_ms", "google_discarded_ms", "cloudflare_retained_ms", "cloudflare_discarded_ms",
                  "github_retained_ms", "github_discarded_ms", "entry_passed", "latency_passed"}
-PUBLIC_FIELDS.update({"measurement_mode", "tcp_rounds_ms", "tcp_average_latency_ms", "tcp_loss_percent", "tcp_jitter_ms", "tcp_success_count",
+PUBLIC_FIELDS.update({"measurement_mode", "latency_probe", "latency_domain", "rejection_reason", "tcp_rounds_ms", "tcp_average_latency_ms", "tcp_loss_percent", "tcp_jitter_ms", "tcp_success_count",
                       "tls_rounds_ms", "tls_average_latency_ms", "tls_jitter_ms", "tls_loss_percent", "tls_enabled", "tls_passed",
                       "download_mbps", "download_measurement", "colo", "city", "geo_method", "latency_targets", "probe_method"})
 ARTIFACTS = ("nodes.txt", "nodes.json", "nodes.csv", "api.json", "ip.zip")

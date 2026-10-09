@@ -212,7 +212,7 @@ class DualMethodTests(unittest.TestCase):
             self.assertTrue(row["qualified"])
             self.assertNotIn("https://cp.cloudflare.com/",urls)
 
-    def test_direct_pipeline_needs_no_profile_and_retests_all_three_tcp_samples_for_custom_quota(self):
+    def test_tls_pipeline_needs_no_profile_or_tcp_and_retests_three_handshakes_for_custom_quota(self):
         async def speed(nodes, options, **kwargs):
             nodes[0].speed_mbps = 12
             nodes[0].probe_results["speed"] = {"received_bytes": options["bytes_per_test"], "completion_ratio": 1}
@@ -229,19 +229,21 @@ class DualMethodTests(unittest.TestCase):
             candidates = pool(210)
             builder = Mock(return_value=(candidates, {"seed": "fixture", "session_id": "fixture"}))
             tcp = AsyncMock(return_value=90)
+            tls = AsyncMock(return_value=(180, "TLSv1.3", "cipher"))
             with patch("core.proxybench.pipeline.ProxyProfile.load", side_effect=AssertionError("direct mode must not load authentication")), \
                  patch("core.proxybench.direct_benchmark.tcp_probe", tcp), \
-                 patch("core.proxybench.direct_benchmark.tls_probe", AsyncMock(return_value=(180, "TLSv1.3", "cipher"))), \
+                 patch("core.proxybench.direct_benchmark.tls_probe", tls), \
                  patch("core.proxybench.direct_benchmark.test_speed", side_effect=speed), \
                  patch("core.proxybench.direct_benchmark._request", side_effect=trace):
                 pipeline = Pipeline(settings, pool_builder=builder)
                 result = pipeline.run()
             self.assertTrue(result["published"])
             self.assertEqual((result["general_final_count"], result["jp_final_count"]), (200, 7))
-            self.assertEqual(tcp.await_count, 3 * (210 + 207))
+            tcp.assert_not_awaited()
+            self.assertEqual(tls.await_count, 3 * (210 + 207))
             builder.assert_called_once()
             rows = json.loads((root / "output/Nodes-TCP/nodes.json").read_text(encoding="utf-8"))
-            self.assertTrue(all(len(r["tcp_rounds_ms"]) == len(r["tls_rounds_ms"]) == 3 for r in rows))
+            self.assertTrue(all(r["tcp_rounds_ms"] == [] and len(r["tls_rounds_ms"]) == 3 and r["latency_probe"] == "tls" for r in rows))
             self.assertEqual([r["rank"] for r in rows], list(range(1, 208)))
             self.assertFalse((root / "output/nodes.txt").exists())
 

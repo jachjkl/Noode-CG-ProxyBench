@@ -1,4 +1,4 @@
-"""Three consecutive TCP/TLS measurements using the original package's direct probes."""
+"""Exclusive TCPing or TLS, then the original direct download probe per batch."""
 from __future__ import annotations
 
 import asyncio
@@ -21,6 +21,11 @@ from core.tls_check import make_ssl_context
 from .settings import validate_tcp_rules
 
 
+def selected_probe(rules: dict) -> str:
+    # The legacy numeric setting selects a method, never an additional gate.
+    return "tls" if rules.get("tls_enabled") else "tcp"
+
+
 def summarize(values: list[float | None]) -> tuple[float | None, float, float]:
     successful = [value for value in values if value is not None]
     return (statistics.fmean(successful) if successful else None,
@@ -29,22 +34,22 @@ def summarize(values: list[float | None]) -> tuple[float | None, float, float]:
 
 
 def direct_failure(record: dict, rules: dict, *, check_tls=True, check_download=True) -> str:
-    if record.get("tcp_average_latency_ms") is None or record["tcp_average_latency_ms"] > rules["max_tcp_average_latency_ms"]:
-        return "Rejected TCP"
-    if record.get("tcp_loss_percent", 100) > rules["max_loss_percent"] or record.get("tcp_jitter_ms", math.inf) > rules["max_jitter_ms"]:
-        return "Rejected TCP"
-    if check_tls and rules["tls_enabled"]:
-        if len(record.get("tls_rounds_ms", [])) != 3 or record.get("tls_average_latency_ms") is None:
-            return "Rejected TLS"
-        if record.get("tls_loss_percent", 100) > rules["max_loss_percent"] or record["tls_average_latency_ms"] > rules["max_tls_average_latency_ms"] or record.get("tls_jitter_ms", math.inf) > rules["max_jitter_ms"]:
-            return "Rejected TLS"
-    if check_download and (not record.get("download_measurement", {}).get("success") or record.get("download_mbps", 0) < rules["min_download_mbps"]):
+    probe = selected_probe(rules)
+    if record.get("latency_probe", probe) != probe:
+        return "Retest Required"
+    average = record.get(f"{probe}_average_latency_ms")
+    if (average is None or average > rules[f"max_{probe}_average_latency_ms"] or
+            record.get(f"{probe}_loss_percent", 100) > rules["max_loss_percent"] or
+            record.get(f"{probe}_jitter_ms", math.inf) > rules["max_jitter_ms"]):
+        return f"Rejected {probe.upper()}"
+    if check_download and (not record.get("download_measurement", {}).get("success") or
+                           record.get("download_mbps", 0) < rules["min_download_mbps"]):
         return "Rejected Speed"
     return ""
 
 
 class DirectManager:
-    version = "TCP／TLS 直连引擎"
+    version = "TCPing／TLS 二选一直连引擎"
     benchmark_active = False
 
     def __init__(self):
@@ -65,94 +70,110 @@ def direct_profile():
 
 
 class DirectBenchmark:
-    def __init__(self, rules: dict, control, update=None):
+    def __init__(self, rules: dict, control, update=None, *, domain="www.cloudflare.com"):
         self.rules = validate_tcp_rules(rules)
         self.control = control
         self.update = update or (lambda **_: None)
+        self.domain = domain
+        self.probe = selected_probe(self.rules)
         self.context = make_ssl_context(True, "TLSv1.2")
         path = Path(__file__).with_name("colo-locations.json")
         self.locations = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
     async def tcp(self, candidate: dict) -> dict:
-        record = {**copy.deepcopy(candidate), "measurement_mode": "tcp_tls", "key": f"{candidate['ip']}:{candidate['port']}",
-                  "rules": self.rules, "qualified": False, "tcp_rounds_ms": [], "tls_rounds_ms": []}
+        return await self.latency(candidate, probe="tcp")
+
+    async def latency(self, candidate: dict, *, probe=None, progress=None) -> dict:
+        probe = probe or self.probe
+        record = {**copy.deepcopy(candidate), "measurement_mode": "tcp_tls", "latency_probe": probe,
+                  "latency_domain": self.domain if probe == "tls" else "", "key": f"{candidate['ip']}:{candidate['port']}",
+                  "rules": self.rules, "qualified": False, "tcp_rounds_ms": [], "tls_rounds_ms": [],
+                  "tls_enabled": probe == "tls", "status": f"{probe.upper()} Testing"}
         node = NodeResult(ip=candidate["ip"], port=candidate["port"])
+        values = []
         for _ in range(3):
             await self.control.async_checkpoint()
             try:
-                value = await tcp_probe(node, self.rules["tcp_timeout_seconds"])
+                if probe == "tcp":
+                    value = await tcp_probe(node, self.rules["tcp_timeout_seconds"])
+                else:
+                    value, _version, _cipher = await tls_probe(node, self.domain, self.context, self.rules["tls_timeout_seconds"])
             except (TimeoutError, OSError):
                 value = None
-            record["tcp_rounds_ms"].append(value)
-        average, jitter, loss = summarize(record["tcp_rounds_ms"])
-        record.update(tcp_average_latency_ms=average, tcp_jitter_ms=jitter, tcp_loss_percent=loss,
-                      tcp_success_count=sum(x is not None for x in record["tcp_rounds_ms"]),
-                      entry_connected=average is not None, entry_latency_ms=average, entry_method="three-consecutive-direct-tcp-connects")
-        record["status"] = direct_failure(record, self.rules, check_tls=False, check_download=False) or "TCP Passed"
+            values.append(value)
+            record[f"{probe}_rounds_ms"] = list(values)
+            if progress:
+                progress(record)
+        average, jitter, loss = summarize(values)
+        record.update({f"{probe}_average_latency_ms": average, f"{probe}_jitter_ms": jitter,
+                       f"{probe}_loss_percent": loss, f"{probe}_success_count": sum(x is not None for x in values)})
+        record.update(entry_connected=average is not None, entry_latency_ms=average,
+                      entry_method=f"three-consecutive-direct-{probe}-" + ("connects" if probe == "tcp" else "handshakes"))
+        failure = direct_failure(record, self.rules, check_download=False)
+        record["status"] = failure or f"{probe.upper()} Passed"
+        if failure:
+            record["rejection_reason"] = (f"{probe.upper()}：成功 {sum(x is not None for x in values)}/3 次；平均 {average:.2f} 毫秒"
+                                          if average is not None else f"{probe.upper()}：三次连接全部失败")
+            record["rejection_reason"] += (f"；丢包 {loss:.2f}%，抖动 {jitter:.2f} 毫秒；"
+                                           f"上限 {self.rules[f'max_{probe}_average_latency_ms']:g} 毫秒／"
+                                           f"{self.rules['max_loss_percent']:g}%／{self.rules['max_jitter_ms']:g} 毫秒")
         return record
 
     async def screen(self, candidates: list[dict], completed) -> list[dict]:
         async def worker(row):
-            record = await self.tcp(row)
+            record = await self.latency(row)
             completed(record)
             return record
-        return await run_worker_pool(candidates, worker, self.rules["tcp_concurrency"])
+        return await run_worker_pool(candidates, worker, min(100, self.rules[f"{self.probe}_concurrency"]))
 
-    def batch(self, candidates: list[dict], completed, *, reuse_tcp=True) -> list[dict]:
-        return asyncio.run(self._batch(candidates, completed, reuse_tcp=reuse_tcp))
+    def batch(self, candidates: list[dict], completed, *, reuse_tcp=False) -> list[dict]:
+        return asyncio.run(self._batch(candidates, completed))
 
-    async def _batch(self, candidates: list[dict], completed, *, reuse_tcp=True) -> list[dict]:
-        speed_slots = asyncio.Semaphore(self.rules["speed_concurrency"])
-        tls_slots = asyncio.Semaphore(self.rules["tls_concurrency"])
-        records = {f"{row['ip']}:{row['port']}": {**copy.deepcopy(row), "measurement_mode": "tcp_tls", "status": "TCP Testing"} for row in candidates}
+    async def _batch(self, candidates: list[dict], completed) -> list[dict]:
+        records = {}
 
-        def show(record, stage):
-            records[record["key"]] = record
-            record["status"] = stage
-            self.update(stage=stage, candidates=list(records.values()), status="Running")
+        def show(record):
+            records[record["key"]] = copy.deepcopy(record)
+            self.update(stage=record["status"], candidates=list(records.values()), status="Running")
 
-        async def worker(candidate):
-            if reuse_tcp and len(candidate.get("tcp_rounds_ms", [])) == 3:
-                record = {**copy.deepcopy(candidate), "rules": self.rules, "qualified": False, "key": f"{candidate['ip']}:{candidate['port']}"}
-            else:
-                record = await self.tcp(candidate)
+        def finish(record):
+            record.update(tested_at=datetime.now(UTC).isoformat())
+            show(record)
+            completed(record)
+
+        async def measure(candidate):
+            record = await self.latency(candidate, progress=show)
+            show(record)
+            if record["status"].startswith("Rejected"):
+                finish(record)
+            return record
+
+        # Match the reference's barrier between latency and bandwidth tests.
+        tested = await run_worker_pool(candidates, measure, min(100, self.rules[f"{self.probe}_concurrency"]))
+        survivors = [r for r in tested if r["status"].endswith("Passed")]
+
+        async def download(record):
+            record["status"] = "Direct Speed Testing"
+            show(record)
             node = NodeResult(ip=record["ip"], port=record["port"])
-            failure = direct_failure(record, self.rules, check_tls=False, check_download=False)
-            record.update(tls_enabled=bool(self.rules["tls_enabled"]))
-            if not failure and self.rules["tls_enabled"]:
-                show(record, "TLS Testing")
-                values = []
-                async with tls_slots:
-                    for _ in range(3):
-                        await self.control.async_checkpoint()
-                        try:
-                            value, _version, _cipher = await tls_probe(node, "www.cloudflare.com", self.context, self.rules["tls_timeout_seconds"])
-                        except (TimeoutError, OSError):
-                            value = None
-                        values.append(value)
-                average, jitter, loss = summarize(values)
-                record.update(tls_rounds_ms=values, tls_average_latency_ms=average, tls_jitter_ms=jitter, tls_loss_percent=loss)
-                failure = direct_failure(record, self.rules, check_download=False)
-            record["tls_passed"] = not failure
-            if not failure:
-                show(record, "Direct Speed Testing")
-                async with speed_slots:
-                    await self.control.async_checkpoint()
-                    await test_speed([node], {"enabled": True, "candidates": 1, "domain": "speed.cloudflare.com",
-                                             "path": f"/__down?bytes={self.rules['download_bytes']}", "bytes_per_test": self.rules["download_bytes"],
-                                             "timeout_seconds": self.rules["download_timeout_seconds"], "maximum_download_seconds": self.rules["maximum_download_seconds"],
-                                             "minimum_completion_ratio": self.rules["minimum_completion_ratio"], "minimum_mbps": self.rules["min_download_mbps"],
-                                             "concurrency": 1}, user_agent="Noode-CG-ProxyBench/1.2")
-                record.update(download_mbps=node.speed_mbps or 0.0,
-                              download_measurement={**node.probe_results.get("speed", {}), "success": node.speed_mbps is not None,
-                                                    "routing_proof": "direct-pinned-candidate", "destination": f"{node.ip}:{node.port}", "host": "speed.cloudflare.com"})
-                failure = direct_failure(record, self.rules)
-            if not failure:
-                show(record, "Direct Location")
+            await self.control.async_checkpoint()
+            await test_speed([node], {"enabled": True, "candidates": 1, "domain": "speed.cloudflare.com",
+                                     "path": f"/__down?bytes={self.rules['download_bytes']}", "bytes_per_test": self.rules["download_bytes"],
+                                     "timeout_seconds": self.rules["download_timeout_seconds"], "maximum_download_seconds": self.rules["maximum_download_seconds"],
+                                     "minimum_completion_ratio": self.rules["minimum_completion_ratio"], "minimum_mbps": self.rules["min_download_mbps"],
+                                     "concurrency": 1}, user_agent="Noode-CG-ProxyBench/1.2.1")
+            record.update(download_mbps=node.speed_mbps or 0.0,
+                          download_measurement={**node.probe_results.get("speed", {}), "success": node.speed_mbps is not None,
+                                                "routing_proof": "direct-pinned-candidate", "destination": f"{node.ip}:{node.port}", "host": "speed.cloudflare.com"})
+            failure = direct_failure(record, self.rules)
+            if failure:
+                record["rejection_reason"] = f"下载 {record['download_mbps']:g} Mbps；最低 {self.rules['min_download_mbps']:g} Mbps；正文完整度或连接失败也会淘汰"
+            else:
+                record["status"] = "Direct Location"
+                show(record)
                 try:
-                    await self.control.async_checkpoint()
                     status, headers, body, _ttfb = await _request(node, domain="www.cloudflare.com", path="/cdn-cgi/trace", context=self.context,
-                                                                 timeout=self.rules["tls_timeout_seconds"], user_agent="Noode-CG-ProxyBench/1.2")
+                                                                 timeout=self.rules["tls_timeout_seconds"], user_agent="Noode-CG-ProxyBench/1.2.1")
                     trace = _parse_trace(body)
                     colo = trace.get("colo", "").upper()
                     location = self.locations.get(colo, {})
@@ -161,10 +182,9 @@ class DirectBenchmark:
                                   jp_qualified=country == "JP", geo_method="cloudflare-edge-colo", cf_ray=headers.get("cf-ray", ""))
                 except (TimeoutError, OSError, ValueError, EOFError):
                     record.update(geo_country="", geo_verified=False, geo_conflict=False, jp_qualified=False)
-            record.update(qualified=not failure, status=failure or "Qualified", tested_at=datetime.now(UTC).isoformat())
-            records[record["key"]] = record
-            completed(record)
-            self.update(candidates=list(records.values()))
+            record.update(qualified=not failure, status=failure or "Qualified")
+            finish(record)
             return record
 
-        return await run_worker_pool(candidates, worker, max(self.rules["tls_concurrency"], self.rules["speed_concurrency"]))
+        await run_worker_pool(survivors, download, self.rules["speed_concurrency"])
+        return tested

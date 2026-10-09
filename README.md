@@ -1,6 +1,6 @@
 # Noode-CG-ProxyBench
 
-A standalone Windows IP optimizer with two selectable measurement methods: authenticated proxy website tests and direct TCP/TLS tests adapted from the original local package. The application interface and operating instructions are Chinese; this README and development documentation are English.
+A standalone Windows IP optimizer with three explicit measurement choices: authenticated proxy website tests, direct TCPing, or direct TLS. The two direct latency methods are mutually exclusive and follow the original local package's bounded 100-IP pipeline. The application interface and operating instructions are Chinese; this README and development documentation are English.
 
 ## Run on Windows
 
@@ -8,18 +8,18 @@ Double-click the Windows EXE, or extract the Windows ZIP and run its launcher. T
 
 Choose a method at the top, save its rules and publication counts, then start optimization. Each method has its own five-step workflow, live measurements and rejection table, publication competition table, timer, and checkpoint. Tables paginate at 300 records. The unified cloud table displays both methods with their original ranks, location, measured latency, loss, jitter, speed, and per-IP copy actions. Chinese event logs remain in `logs/` after closure. Original rising particles, green completion gradients, bottom fluorescence, and button ripples remain; reduced-motion preferences are respected.
 
-## Two measurement methods
+## Three measurement choices
 
 | Method | Measurement | Default preset | Output |
 | --- | --- | --- | --- |
 | Authenticated proxy | Five requests each to Google, Cloudflare and GitHub; remove one highest and one lowest per site, average the remaining samples, then average the three site means. Candidate-specific small-sample download. | Entry and composite limits 300 ms, failed requests 0%, response jitter at most 500 ms, download at least 3.01 Mbps. Defaults preserve the owner's latest proxy preset. | `output/nodes.txt` |
-| Direct TCP/TLS | Three consecutive TCP connections per IP; arithmetic mean of successes, failures divided by all three attempts, population standard deviation. Optional three TLS handshakes. Original pinned-IP HTTPS download probe. | TCP mean 200 ms, loss at most 20%, jitter at most 200 ms, download at least 3 Mbps. Independent TLS probes are off, matching the original saved preset; when enabled their mean limit is 300 ms. | `output/Nodes-TCP/nodes.txt` |
+| Direct TCPing or TLS | Select exactly one latency probe. Three consecutive connections OR three verified TLS handshakes; arithmetic mean of successes, failures divided by all three attempts, population standard deviation. Finish the original pinned-IP download test within each batch before testing more candidates. | Selected mean at most 200 ms, loss at most 20%, jitter at most 200 ms, download at least 3 Mbps. Previously saved limits remain authoritative. | `output/Nodes-TCP/nodes.txt` |
 
 Both presets use a 512 KiB download sample, at least 95% response-body completion, an 8-second I/O timeout and a 7-second body-time limit. Download timing begins after headers. All limits are configurable with Chinese help and persist independently. A failed or above-limit measurement cannot qualify. Direct mode requires no proxy profile or application-owned proxy core; existing operating-system/VPN routes remain in effect.
 
 Proxy mode uses one isolated, loopback-only Mihomo core in rule mode, with at most 100 independent candidate nodes per batch. It preserves the user's existing Clash, VPN, TUN and system proxy. Public Cloudflare trace is the default website probe because the legacy `cp.cloudflare.com` target can fail through EdgeTunnel. Adaptive concurrency reduces local congestion without changing thresholds. Full-pool TCP screening runs before expensive proxy requests, failed requests finish early when the configured loss limit becomes impossible, geography uses one successful provider during screening, and early competition begins after the saved quotas plus a retest margin are reached. Final competition rechecks geography and every saved quality rule.
 
-Direct mode uses the original `core/tcp_scan.py`, `core/tls_check.py` and `core/speed_test.py` probes. TLS measurements include connection and handshake time. Edge location comes from the trace `colo` mapped to a bundled location table; trace `loc` identifies the requesting client and is not used as candidate geography. Unknown ordinary locations are `XX`; Japanese append entries require verified JP geography.
+Direct mode uses the original `core/tcp_scan.py`, `core/tls_check.py` and `core/speed_test.py` probes. TLS measurements include connection and handshake time, using the configured project target domain as the reference package does. TCPing does not run independent TLS latency checks; HTTPS downloads still use TLS transport. TLS selection does not run a TCP latency gate. The application never starts its proxy core for either direct choice; existing operating-system routes remain in effect. Edge location comes from the trace `colo` mapped to a bundled location table; trace `loc` identifies the requesting client and is not used as candidate geography. Unknown ordinary locations are `XX`; Japanese append entries require verified JP geography.
 
 ## Configurable publication counts
 
@@ -54,6 +54,8 @@ python scripts/build_delivery_bundle.py
 `--personal` builds the explicitly authorized private local-profile bundle. The maintenance ZIP in `dist/` combines Windows EXE/ZIP, cloud source ZIP, directory listing, SHA-256 inventory, repair-workspace preparation/rebuild scripts, and verified build caches. Extract and repair inside its workspace; embedded Python supports rebuilding without a Git checkout. A single `VERSION` in `core/proxybench/__init__.py` controls file names.
 
 ## Verification
+
+Version 1.2.1 passes 334 automated tests and browser checks for exclusive TCPing/TLS selection, persisted settings, real particle motion and hover feedback. A bounded test of 100 candidates from the interrupted local run qualified 7 with TCPing and 1 with TLS under unchanged 200 ms / 20% loss / 200 ms jitter / 3 Mbps limits; neither method measured the other latency probe. See the version 1.2.1 section in the [validation evidence](docs/VALIDATION.md). Earlier version 1.2.0 results below are historical comparisons.
 
 Version 1.2.0 passes 329 deterministic tests and browser replay of both methods, custom saved quotas, all result tabs, independent 300-row paging, competition views, unified cloud rows, clipboard, Chinese logs and responsive layout. The final proxy test excluded published addresses, screened 1,000 candidates in 5.31 seconds, and measured 98 admitted candidates. Twenty-two passed strict 200 ms entry and response limits, zero failed requests and 3.01 Mbps in 111.20 seconds total, including the saved pauses and geographic requests. Cloudflare used actual GET and trace-body validation. A direct 100-candidate pipeline initially qualified 27 and retained 25 after competition; these were confirmed by [cloud publication 37885554940](https://github.com/jachjkl/Noode-CG-ProxyBench/actions/runs/37885554940). The earlier saved proxy publication remains available for fresh competition under the new policy. See [validation evidence](docs/VALIDATION.md) for the distinction between preliminary API-only observations, current verified measurements, and publication.
 

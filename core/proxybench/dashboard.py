@@ -120,7 +120,7 @@ class BenchDashboard:
             rows = self.read_cached(settings["output_dir"] / "nodes.json", default=[])
         elif kind == "live-results":
             active_keys = {f"{row['ip']}:{row['port']}" for row in active_rows}
-            rows = [row for row in measured.values() if row.get("probes") or row.get("proxy_probe_count") or row.get("tcp_rounds_ms")]
+            rows = [row for row in measured.values() if row.get("probes") or row.get("proxy_probe_count") or row.get("tcp_rounds_ms") or row.get("tls_rounds_ms")]
             rows.sort(key=lambda row: (f"{row['ip']}:{row['port']}" in active_keys, row.get("tested_at", "")), reverse=True)
         elif kind == "results":
             rows = [row for row in measured.values() if row.get("tested_at") and row.get("status") != "Rejected Entry"]
@@ -225,7 +225,7 @@ class BenchDashboard:
                 nodes = self.cloud_published.get("nodes", [])
                 allowed = {"ip", "port", "rank", "lane", "qualified", "geo_country", "country", "entry_latency_ms", "proxy_average_latency_ms", "proxy_download_average_mbps",
                            "proxy_loss_percent", "latency_jitter_ms", "measurement_mode", "tcp_average_latency_ms", "tcp_loss_percent", "tcp_jitter_ms", "tls_average_latency_ms", "download_mbps", "city",
-                           "tcp_rounds_ms", "tls_rounds_ms", "tls_enabled", "google_rounds_ms", "cloudflare_rounds_ms", "github_rounds_ms",
+                           "tcp_rounds_ms", "tls_rounds_ms", "tls_enabled", "latency_probe", "latency_domain", "tls_loss_percent", "tls_jitter_ms", "rejection_reason", "google_rounds_ms", "cloudflare_rounds_ms", "github_rounds_ms",
                            "google_average_ms", "cloudflare_average_ms", "github_average_ms"}
                 return {"rows": [{key: value for key, value in row.items() if key in allowed} for row in nodes], "total": len(nodes)}
             running = bool(self.process and self.process.poll() is None) or owned_core_running(settings["runtime_dir"])
@@ -233,6 +233,8 @@ class BenchDashboard:
                 return self.action("resume-paused" if running else "resume", {})
             if action == "rules":
                 rules = validate_rules({**current_rules(settings), **payload}, settings.get("measurement_mode", "proxy"))
+                if self.direct and running and rules["tls_enabled"] != current_rules(settings)["tls_enabled"]:
+                    raise ValueError("请先停止并保存，再切换 TCPing 或 TLS")
                 atomic_write_json(settings["rules_path"], rules)
                 self.events.append(f"规则已保存：常规发布前 {rules['publish_count']} 个，日本追加 {rules['jp_publish_count']} 个")
                 return {"saved": True, "rules": rules, "effective": "已保存到本机，下一批生效；再次打开也使用这些规则" if running else "已保存到本机，立即生效；再次打开也使用这些规则"}

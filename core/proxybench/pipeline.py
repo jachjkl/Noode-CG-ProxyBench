@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import concurrent.futures
 import copy
 import gzip
@@ -70,7 +69,7 @@ class Pipeline:
     def __init__(self, settings: dict, manager=None, pool_builder=build) -> None:
         self.settings = settings
         self.direct = settings.get("measurement_mode") == "tcp_tls"
-        self.policy = "direct-tcp-tls-v1" if self.direct else PROXY_POLICY
+        self.policy = ("direct-exclusive-v2-" + ("tls" if current_rules(settings)["tls_enabled"] else "tcp")) if self.direct else PROXY_POLICY
         self.store = Store(settings["state_dir"])
         if self.direct and manager is None:
             from .direct_benchmark import DirectManager
@@ -115,7 +114,9 @@ class Pipeline:
 
     def screen_candidates(self, candidates: list[dict], *, result_field="results", refresh=False) -> list[dict]:
         if self.direct:
-            return self.screen_direct(candidates, result_field=result_field, refresh=refresh)
+            # Match the reference: finish each 100-IP group end to end before
+            # opening more sockets. TLS selection has no separate TCP gate.
+            return sorted(candidates, key=lambda row: (not row.get("jp_hint", False), row.get("source_priority", 999)))
         if not self.settings.get("fast_entry_screen"):
             return candidates
         rules = current_rules(self.settings)
@@ -186,7 +187,7 @@ class Pipeline:
             remaining = remaining[rules["batch_size"]:]
             batch_number += 1
             self.update(batch_current=batch_number, batch_total=math.ceil(len(candidates) / rules["batch_size"]),
-                        batch_completed=len(state[result_field]) // rules["batch_size"], stage="TCP Testing" if self.direct else "Loading Proxy", active_rules=rules)
+                        batch_completed=len(state[result_field]) // rules["batch_size"], stage=("TLS Testing" if rules["tls_enabled"] else "TCP Testing") if self.direct else "Loading Proxy", active_rules=rules)
             for attempt in range(3):
                 try:
                     batch = [item for item in batch if f"{item['ip']}:{item['port']}" not in state[result_field]]
@@ -198,10 +199,11 @@ class Pipeline:
                         with self.update_lock:
                             state[result_field][result["key"]] = result
                             self.store.save_partial(result)
-                            self.events.append(f"{result['key']}：{chinese(result.get('status', ''))}", level="info" if result.get("qualified") else "warning")
+                            reason = result.get("rejection_reason", "")
+                            self.events.append(f"{result['key']}：{chinese(result.get('status', ''))}" + (f"；{reason}" if reason else ""), level="info" if result.get("qualified") else "warning")
                     if self.direct:
                         from .direct_benchmark import DirectBenchmark
-                        DirectBenchmark(rules, self.control, self.update).batch(batch, completed, reuse_tcp=True)
+                        DirectBenchmark(rules, self.control, self.update, domain=self.settings.get("direct_tls_domain", "www.cloudflare.com")).batch(batch, completed, reuse_tcp=False)
                     else:
                         benchmark.geo_policy = "confirm" if fixed_rules else "quick"
                         benchmark.batch(batch, profiles, completed)
@@ -223,31 +225,6 @@ class Pipeline:
         winners = [r for r in self.store.state.get("results", {}).values() if r.get("qualified") and not limit_failure(r, rules)]
         japan = sum(bool(r.get("jp_qualified")) for r in winners)
         return len(winners) >= math.ceil(limits["general"] * 1.25) + limits["japan"] and japan >= math.ceil(limits["japan"] * 1.25)
-
-    def screen_direct(self, candidates, *, result_field="results", refresh=False):
-        from .direct_benchmark import DirectBenchmark, direct_failure
-        rules = current_rules(self.settings)
-        screens = self.store.state.setdefault("entry_results", {})
-        remaining = candidates if refresh else [row for row in candidates if f"{row['ip']}:{row['port']}" not in screens]
-        completed_count = 0
-        def completed(record):
-            nonlocal completed_count
-            screens[record["key"]] = record
-            completed_count += 1
-            if record["status"] != "TCP Passed":
-                self.store.state.setdefault(result_field, {})[record["key"]] = {**record, "tested_at": __import__("datetime").datetime.now(__import__("datetime").UTC).isoformat()}
-            if completed_count % 512 == 0:
-                self.store.commit()
-                self.events.append(f"TCP 三次初筛已完成 {len(screens)} 个 IP")
-            self.update(stage="TCP 三次延迟、丢包和抖动初筛", status="Running", candidates=[record], tcp_screened_count=len(screens))
-        asyncio.run(DirectBenchmark(rules, self.control, self.update).screen(remaining, completed))
-        self.store.commit()
-        survivors = []
-        for candidate in candidates:
-            record = screens[f"{candidate['ip']}:{candidate['port']}"]
-            if not direct_failure(record, rules, check_tls=False, check_download=False):
-                survivors.append({**candidate, **record})
-        return sorted(survivors, key=lambda row: (not row.get("jp_hint", False), row["tcp_average_latency_ms"], row["ip"]))
 
     def new_pool(self, profile: ProxyProfile, handoff: bool) -> tuple[list[dict], dict]:
         if handoff:

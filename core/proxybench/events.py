@@ -14,7 +14,7 @@ STATES = {"Running": "运行中", "Stopped": "已停止并保存", "Failed": "�
           "Rejected TLS": "TLS 握手、延迟或抖动不合格", "Preparing": "准备任务", "Dispatching": "请求云端",
           "Downloading": "下载候选", "Local": "本地实测", "Publishing": "准备推送", "Completed": "推送已确认",
           "Needs More": "等待补充候选", "TCP Testing": "正在测量三次 TCP 延迟、丢包和抖动",
-          "TCP Passed": "TCP 初筛通过", "TLS Testing": "正在测量三次 TLS 握手",
+          "TCP Passed": "TCP 延迟通过，等待下载测速", "TLS Passed": "TLS 延迟通过，等待下载测速", "TLS Testing": "正在测量三次 TLS 握手",
           "Direct Speed Testing": "正在直连测量下载速度", "Direct Location": "正在确认直连边缘位置"}
 
 
