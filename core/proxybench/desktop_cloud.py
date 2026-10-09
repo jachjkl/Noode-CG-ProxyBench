@@ -195,7 +195,7 @@ class DesktopCloudController(CloudController):
                 (self.pending_dir / "manifest.json").unlink()
                 (self.pending_dir / "result.zip").unlink()
                 pending = False
-                self.events.append("上次停止的待推送结果已另存；本次重新全量获取 IP")
+                EventLog(self.root, tag).append("上次停止的待推送结果已另存；本次重新全量获取 IP")
             if pending:
                 with zipfile.ZipFile(self.pending_dir / "result.zip") as package:
                     files = {name: package.read(name) for name in package.namelist()}

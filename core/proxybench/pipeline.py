@@ -330,6 +330,8 @@ class Pipeline:
                             self.refresh_retests(field)
                 state.update(phase="general_retest", competition_rules=current_rules(self.settings), general_results={}, jp_results={})
                 seeds = state.pop("manual_retest_seeds", [])
+                from .session_lifecycle import read_saved
+                seeds.extend(read_saved(self.settings))
                 saved_path = self.settings["output_dir"] / "nodes.json"
                 seeds.extend(json.loads(saved_path.read_text(encoding="utf-8")) if saved_path.exists() else [])
                 if seeds:

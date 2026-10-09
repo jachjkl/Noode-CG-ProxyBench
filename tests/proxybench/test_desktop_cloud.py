@@ -62,6 +62,22 @@ class DesktopCloudTests(unittest.TestCase):
             self.assertTrue(all(call.kwargs == {"reuse": False} for call in controller.fetch_handoff.call_args_list))
             self.assertEqual(controller.publish_pending.call_count, 2)
 
+    def test_new_normal_window_archives_stopped_pending_and_fetches_fresh_instead_of_pushing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            controller = self.controller(Path(directory))
+            (controller.settings['state_dir'] / 'batch-state.json').unlink()
+            controller.pending_dir.mkdir(parents=True)
+            (controller.pending_dir / 'result.zip').write_bytes(b'fixture saved results')
+            (controller.pending_dir / 'manifest.json').write_text('{"sha256":"fixture"}')
+            controller.publish_pending = Mock(side_effect=AssertionError('normal new session must not push old pending'))
+            controller.fetch_handoff = Mock()
+            controller.local_select = Mock(return_value={'status':'stopped'})
+            with patch('core.proxybench.desktop_cloud.ProxyProfile.load'), patch('core.proxybench.desktop_cloud.vpn_environment', return_value={}):
+                controller.run()
+            controller.fetch_handoff.assert_called_once()
+            self.assertFalse((controller.pending_dir / 'manifest.json').exists())
+            self.assertEqual((controller.root / 'data/saved-measurements/stopped-proxy-result.zip').read_bytes(),b'fixture saved results')
+
     def test_failed_result_upload_retains_exact_pending_archive(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -96,4 +112,3 @@ class DesktopCloudTests(unittest.TestCase):
                  "jobs": [{"name": "云端发布最优IP", "status": "in_progress"}]}
         rows = progress(live, cloud, {"published": True})
         self.assertEqual([row["status"] for row in rows], ["completed"] * 4 + ["running"])
-
