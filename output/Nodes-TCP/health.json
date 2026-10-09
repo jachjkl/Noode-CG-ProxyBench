@@ -1,14 +1,17 @@
 {
-  "seed": "2a38813807899e6b674960830e83af56",
-  "fixed_sources": {},
-  "fixed_fetched_this_round": false,
-  "fixed_source_count": 0,
-  "excluded_ip_count": 41258,
+  "seed": "00bd8ef5c7edef17fab8ab8dc748b1cb",
+  "fixed_sources": {
+    "fixed-source-a": 11093,
+    "fixed-source-b": 185
+  },
+  "fixed_fetched_this_round": true,
+  "fixed_source_count": 11238,
+  "excluded_ip_count": 0,
   "cloudflare_official_count": 10000,
   "jp_supplement_count": 19,
   "authorized_proxy_count": 0,
-  "candidate_total": 51258,
-  "unique_candidate_count": 10000,
+  "candidate_total": 21257,
+  "unique_candidate_count": 21257,
   "official_ipv4_ranges": [
     "173.245.48.0/20",
     "103.21.244.0/22",
@@ -31,29 +34,40 @@
   "source_from_cache": {
     "gslege-jp-hint": false
   },
-  "continuation": true,
-  "session_id": "7aa54495d20f486660b5464844c18f80",
-  "cycle": 4,
-  "status": "partial",
+  "continuation": false,
+  "session_id": "393998a28bbb4ae02e7d37676c69f50c",
+  "cycle": 1,
+  "status": "needs_more",
   "publication_limits": {
     "general": 100,
     "japan": 10
   },
   "measurement_mode": "tcp_tls",
-  "manual_publication": true,
-  "tested_count": 35600,
-  "qualified_count": 116,
-  "jp_qualified_count": 15,
+  "manual_publication": false,
+  "tested_count": 1500,
+  "qualified_count": 94,
+  "jp_qualified_count": 40,
   "mihomo_version": "TCPing／TLS 二选一直连引擎",
-  "batch_total": 513,
-  "batch_completed": 356,
-  "run_id": "f7dce2c444451d2125a6a4e782e873d1",
-  "previous_general_competitors": 25,
-  "publish_gate_passed": true,
-  "published": true,
-  "needs_more": false,
+  "batch_total": 213,
+  "batch_completed": 15,
+  "run_id": "e7088345bf087b123c6e4c59ea7816b9",
+  "previous_general_competitors": 18,
+  "publish_gate_passed": false,
+  "published": false,
+  "needs_more": true,
   "quota_complete": false,
-  "general_final_count": 18,
-  "jp_final_count": 10,
-  "unique_final_count": 28
+  "general_final_count": 71,
+  "jp_final_count": 8,
+  "unique_final_count": 79,
+  "last_good_publication": {
+    "published": true,
+    "manual_publication": true,
+    "publication_limits": {
+      "general": 100,
+      "japan": 10
+    },
+    "general_final_count": 18,
+    "jp_final_count": 10,
+    "unique_final_count": 28
+  }
 }
