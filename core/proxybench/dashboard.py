@@ -223,8 +223,10 @@ class BenchDashboard:
                 return {"rows": self.events.tail()}
             if action == "cloud-published-results":
                 nodes = self.cloud_published.get("nodes", [])
-                allowed = {"ip", "port", "rank", "lane", "geo_country", "country", "entry_latency_ms", "proxy_average_latency_ms", "proxy_download_average_mbps",
-                           "proxy_loss_percent", "latency_jitter_ms", "measurement_mode", "tcp_average_latency_ms", "tcp_loss_percent", "tcp_jitter_ms", "tls_average_latency_ms", "download_mbps", "city"}
+                allowed = {"ip", "port", "rank", "lane", "qualified", "geo_country", "country", "entry_latency_ms", "proxy_average_latency_ms", "proxy_download_average_mbps",
+                           "proxy_loss_percent", "latency_jitter_ms", "measurement_mode", "tcp_average_latency_ms", "tcp_loss_percent", "tcp_jitter_ms", "tls_average_latency_ms", "download_mbps", "city",
+                           "tcp_rounds_ms", "tls_rounds_ms", "tls_enabled", "google_rounds_ms", "cloudflare_rounds_ms", "github_rounds_ms",
+                           "google_average_ms", "cloudflare_average_ms", "github_average_ms"}
                 return {"rows": [{key: value for key, value in row.items() if key in allowed} for row in nodes], "total": len(nodes)}
             running = bool(self.process and self.process.poll() is None) or owned_core_running(settings["runtime_dir"])
             if action == "resume-testing":

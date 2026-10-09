@@ -319,6 +319,8 @@ class Pipeline:
                         item["port"] = profile.port
                 self.store.partial = {}
             if state and state.get("measurement_policy") != self.policy:
+                if publish_only:
+                    state["manual_retest_seeds"] = [copy.deepcopy(row) for row in state.get("results", {}).values() if row.get("qualified")]
                 if state.get("results"):
                     atomic_write_bytes(self.settings["state_dir"] / f"previous-policy-{secrets.token_hex(4)}-results.json.gz",
                                        gzip.compress(json.dumps(state["results"]).encode(), mtime=0))
@@ -344,6 +346,17 @@ class Pipeline:
                         if field != "results":
                             self.refresh_retests(field)
                 state.update(phase="general_retest", competition_rules=current_rules(self.settings), general_results={}, jp_results={})
+                seeds = state.pop("manual_retest_seeds", [])
+                saved_path = self.settings["output_dir"] / "nodes.json"
+                seeds.extend(json.loads(saved_path.read_text(encoding="utf-8")) if saved_path.exists() else [])
+                if seeds:
+                    seeds = self.unique_ips(sorted((row for row in seeds if row.get("qualified")), key=ranking_key))
+                    limits = publication_limits(state["competition_rules"])
+                    japanese = [row for row in seeds if row.get("geo_country") == "JP" and row.get("geo_verified")][:limits["japan"]]
+                    reserved = {row["ip"] for row in japanese}
+                    ordinary = [row for row in seeds if row["ip"] not in reserved][:limits["general"]]
+                    state["previous_general"] = self.competition_candidates(ordinary, state.get("previous_general", []))
+                    state["previous_jp"] = self.competition_candidates(japanese, state.get("previous_jp", []))
                 self.store.commit()
             try:
                 self.update(stage="准备免代理 TCP／TLS 测试引擎" if self.direct else "检查代理环境与内核更新", status="Running")

@@ -22,6 +22,33 @@ from tests.proxybench.test_publication_controller import winners
 
 
 class ManualPublishTimerTests(unittest.TestCase):
+    def test_policy_upgrade_keeps_old_qualified_ips_as_candidates_for_fresh_manual_retest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = test_session_cloud.SessionCloudTests().settings(Path(directory))
+            settings.update(auto_update=False, geo_urls=[], auto_refresh_profile=False)
+            settings["profile"].parent.mkdir(parents=True)
+            settings["profile"].write_text(f'proxy:\n  type: vless\n  port: 443\n  uuid: {UUID}\n', encoding="utf-8")
+            manager = FakeManager()
+            manager.version = "fixture"
+            manager.ensure = Mock()
+            manager.stop = Mock()
+            manager.health = lambda: {"status": "Stopped"}
+            manager.controller.delay = lambda *args: manager.controller.calls.append(args) or {"success": True, "latency_ms": 90}
+            node = pool(3)[0]
+            pipeline = Pipeline(settings, manager=manager)
+            pipeline.store.state = {"run_id": "old", "session_id": "old", "cycle": 1, "phase": "scan", "sources": {}, "pool": pool(3),
+                                    "profile_fingerprint": ProxyProfile.load(settings["profile"]).fingerprint,
+                                    "measurement_policy": "entry-proxy-v7-trace",
+                                    "results": {"104.16.0.1:443": {**node, "qualified": True, "proxy_average_latency_ms": 90}}}
+            pipeline.store.commit()
+            pipeline.new_pool = Mock(side_effect=AssertionError("manual policy migration must not acquire or scan new IPs"))
+            result = pipeline.run(resume=True, publish_only=True)
+            self.assertTrue(result["published"])
+            self.assertEqual(result["unique_final_count"], 1)
+            self.assertEqual({ip for batch in manager.loads for ip in batch}, {"PB-COMP-000001"})
+            self.assertEqual(len(manager.controller.calls), 15)
+            self.assertTrue(list(settings["state_dir"].glob("previous-policy-*-results.json.gz")))
+
     def test_elapsed_pauses_resumes_survives_reopen_without_counting_downtime_and_resets(self):
         with tempfile.TemporaryDirectory() as directory:
             now = [100.0]

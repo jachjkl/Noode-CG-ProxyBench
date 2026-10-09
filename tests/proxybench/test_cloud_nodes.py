@@ -13,6 +13,26 @@ from tests.proxybench import test_dashboard_pages, test_publication_controller
 
 
 class CloudNodesTests(unittest.TestCase):
+    def test_large_cloud_file_uses_trusted_git_blob_when_contents_api_has_no_inline_base64(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            publish(root / "output", test_publication_controller.winners(), {})
+            content = (root / "output/nodes.json").read_bytes()
+            client = Mock(settings={"state_dir": root})
+            client.command.side_effect = ["a" * 40, {"encoding": "none", "content": "", "sha": "b" * 40},
+                                          {"encoding": "base64", "content": base64.b64encode(content).decode()}]
+            with patch("core.proxybench.cloud_nodes.download", side_effect=lambda dest, *a, **k: dest.write_bytes(content)):
+                result = read_published(client)
+            self.assertEqual(result["total"], 110)
+            self.assertEqual(client.command.call_args.args[0][-1], "repos/jachjkl/Noode-CG-ProxyBench/git/blobs/" + "b" * 40)
+
+    def test_large_file_does_not_follow_an_invalid_blob_reference(self):
+        client = Mock(settings={})
+        client.command.side_effect = ["a" * 40, {"encoding": "none", "content": "", "sha": "../private"}]
+        with self.assertRaises(CloudError):
+            read_published(client)
+        self.assertEqual(client.command.call_count, 2)
+
     def test_cloud_original_order_and_rank_are_preserved_in_read_only_panel(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

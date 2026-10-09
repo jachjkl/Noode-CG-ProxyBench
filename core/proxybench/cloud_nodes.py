@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 
 from core.io_utils import atomic_write_json
@@ -24,6 +25,13 @@ def read_published(client) -> dict:
         if placeholder.get("size") == 0:
             return {"status": "Empty", "nodes": [], "total": 0, "general": 0, "japan": 0, "message": "云端尚未发布合格 IP"}
         raise
+    if metadata.get("encoding", "base64") != "base64":
+        sha = metadata.get("sha", "")
+        if not isinstance(sha, str) or not re.fullmatch(r"[a-f0-9]{40}", sha):
+            raise CloudError("云端大文件摘要格式错误")
+        metadata = client.command(["api", f"repos/{REPOSITORY}/git/blobs/{sha}"], as_json=True)
+        if metadata.get("encoding") != "base64":
+            raise CloudError("云端大文件编码不支持")
     content = base64.b64decode("".join(metadata["content"].split()), validate=True)
     expected = hashlib.sha256(content).hexdigest()
     cached = client.settings["state_dir"] / "cloud-published-nodes.json"
