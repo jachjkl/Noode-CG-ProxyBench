@@ -1,17 +1,17 @@
 {
-  "seed": "20a92f823ce07936c1086c7b2b925bad",
+  "seed": "e3065487d30b2b58f954da9ca68ef641",
   "fixed_sources": {
-    "fixed-source-a": 11255,
-    "fixed-source-b": 184
+    "fixed-source-a": 11093,
+    "fixed-source-b": 187
   },
   "fixed_fetched_this_round": true,
-  "fixed_source_count": 11400,
+  "fixed_source_count": 11239,
   "excluded_ip_count": 0,
   "cloudflare_official_count": 10000,
   "jp_supplement_count": 19,
   "authorized_proxy_count": 0,
-  "candidate_total": 21419,
-  "unique_candidate_count": 21419,
+  "candidate_total": 21258,
+  "unique_candidate_count": 21258,
   "official_ipv4_ranges": [
     "173.245.48.0/20",
     "103.21.244.0/22",
@@ -35,19 +35,35 @@
     "gslege-jp-hint": false
   },
   "continuation": false,
-  "session_id": "3c4631f6cdd5b37f6e2b2152d201dcfa",
+  "session_id": "0825eeb6d64e5fd68edc9c64fa890d2c",
   "cycle": 1,
-  "status": "ok",
-  "run_id": "60761ba81b15ea446d4ae2b1468a6b34",
-  "qualified_count": 114,
-  "tested_count": 15796,
+  "status": "needs_more",
+  "publication_limits": {
+    "general": 100,
+    "japan": 10
+  },
+  "measurement_mode": "proxy",
+  "manual_publication": false,
+  "tested_count": 12325,
+  "qualified_count": 131,
+  "jp_qualified_count": 40,
   "mihomo_version": "v1.19.32",
-  "manual_publication": true,
-  "retest_seconds": 397.547,
-  "publish_gate_passed": true,
-  "published": true,
-  "needs_more": false,
+  "batch_total": 213,
+  "batch_completed": 124,
+  "run_id": "e4234c92a7d7d21b1fd0be347f12ec93",
+  "previous_general_competitors": 100,
+  "publish_gate_passed": false,
+  "published": false,
+  "needs_more": true,
+  "quota_complete": false,
   "general_final_count": 100,
-  "jp_final_count": 10,
-  "unique_final_count": 110
+  "jp_final_count": 8,
+  "unique_final_count": 108,
+  "last_good_publication": {
+    "published": true,
+    "manual_publication": true,
+    "general_final_count": 100,
+    "jp_final_count": 10,
+    "unique_final_count": 110
+  }
 }
