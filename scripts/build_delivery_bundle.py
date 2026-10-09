@@ -52,7 +52,7 @@ def assemble(destination: Path, *, windows: Path, installer: Path, source: Path,
 修复：双击“准备修复工作区.cmd”，生成“修复工作区/Noode-CG-ProxyBench”后编辑其中的源码。再次运行准备脚本会保留已有源码修改。修复后双击“重新打包.cmd”，新包写入修复工作区的 dist 文件夹。本包使用自带 Python 和依赖，无需单独安装 Python，也不要求工作区有 .git 目录。
 
 本地界面：windows-controller/dashboard/proxybench.html、proxybench.js、proxybench.css 和 app.css；原有粒子上升、选中荧光与点击波纹均包含。
-本地测速：core/proxybench/entry_probe.py、benchmark.py、direct_benchmark.py、controller.py、settings.py。顶部选择代理三网站、TCPing 直连或 TLS 直连（后两者二选一），常规与日本发布数量均在规则中分别保存。
+本地测速：core/proxybench/benchmark.py、direct_benchmark.py、controller.py、network_deadline.py、settings.py。顶部选择代理三网站、TCPing 直连或 TLS 直连（后两者二选一），常规与日本发布数量均在规则中分别保存；每批 100 个 IP，不进行初筛。
 五步流程与完成动画：core/proxybench/workflow.py、cloud.py、dashboard.py，以及本地界面的 proxybench.js、proxybench.css。
 云端流程：.github/workflows/proxybench.yml、sources/、core/proxybench/pipeline.py。
 输出与推送：core/proxybench/export.py、scripts/proxybench_channel.py；代理结果在 output/nodes.txt，TCPing／TLS 共用结果在 output/Npdex-Tcp/Tls.txt，每行如 82.139.242.5:443#DE。初始空文件不是已完成的优选结果。
