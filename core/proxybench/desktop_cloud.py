@@ -14,7 +14,7 @@ from core.io_utils import atomic_write_bytes, atomic_write_json
 from scripts.proxybench_channel import pack, result_prefix, validate_result_files
 from scripts.sync_cloud_handoff import download, sources
 
-from .cloud import REPOSITORY, CloudController, CloudError
+from .cloud import CloudController, CloudError
 from .cloud_network import vpn_environment
 from .events import EventLog, chinese
 from .pipeline import Pipeline
@@ -64,13 +64,13 @@ class DesktopCloudController(CloudController):
         self.update(status="Dispatching", dispatch_id=request, session_id=fields.get("session_id", ""),
                     local_before_dispatch=prior.get("workflow_run_id", ""))
         self.update(**context)
-        args = ["workflow", "run", workflow, "--repo", REPOSITORY, "--ref", "main", "-f", f"dispatch_id={request}"]
+        args = ["workflow", "run", workflow, "--repo", self.repository, "--ref", self.branch, "-f", f"dispatch_id={request}"]
         for key, value in fields.items():
             args.extend(["-f", f"{key}={value}"])
         self.command(args)
         for _ in range(60):
             self.control.checkpoint()
-            runs = self.command(["run", "list", "--repo", REPOSITORY, "--workflow", workflow, "--limit", "20",
+            runs = self.command(["run", "list", "--repo", self.repository, "--workflow", workflow, "--limit", "20",
                                  "--json", "databaseId,displayTitle,event"], as_json=True)
             current = next((row for row in runs if request in row.get("displayTitle", "") and row.get("event") == "workflow_dispatch"), None)
             if current:
@@ -86,14 +86,14 @@ class DesktopCloudController(CloudController):
             raise CloudError("云端候选获取未完成，已保留本机候选和断点")
         dest = self.root / "runtime/cloud-handoff" / str(self.run_id)
         dest.mkdir(parents=True, exist_ok=True)
-        self.command(["run", "download", str(self.run_id), "--repo", REPOSITORY, "--name", "proxybench-handoff-metadata", "--dir", str(dest)], timeout=60)
+        self.command(["run", "download", str(self.run_id), "--repo", self.repository, "--name", "proxybench-handoff-metadata", "--dir", str(dest)], timeout=60)
         metadata = json.loads((dest / "handoff.json").read_text(encoding="utf-8"))
-        if metadata.get("repository") != REPOSITORY or metadata.get("session_id") != session_id or not re.fullmatch(r"[a-f0-9]{40}", metadata.get("ref", "")):
+        if metadata.get("repository") != self.repository or metadata.get("session_id") != session_id or not re.fullmatch(r"[a-f0-9]{40}", metadata.get("ref", "")):
             raise CloudError("云端候选元数据不对应当前会话")
         self.update(status="Downloading", stage="通过多镜像下载并校验候选 IP", handoff_ready=True)
         try:
             download(self.root / "data/handoff/proxybench-pool.json.gz", metadata["sha256"],
-                     sources(REPOSITORY, metadata["ref"], "data/handoff/proxybench-pool.json.gz"), timeout=8, checkpoint=self.control.checkpoint)
+                     sources(self.repository, metadata["ref"], "data/handoff/proxybench-pool.json.gz"), timeout=8, checkpoint=self.control.checkpoint)
         except RuntimeError:
             raise CloudError("所有候选镜像暂时不可用，已保留旧候选；可继续重试") from None
         # The checked pool already contains its source report and incumbent nodes.
@@ -144,7 +144,7 @@ class DesktopCloudController(CloudController):
         request_path = pending / "public-upload.json"
         atomic_write_json(request_path, {"encoding": "base64", "content": base64.b64encode(content).decode("ascii")})
         try:
-            result = self.command(["api", "--method", "POST", f"repos/{REPOSITORY}/git/blobs", "--input", str(request_path)], as_json=True, timeout=60)
+            result = self.command(["api", "--method", "POST", f"repos/{self.repository}/git/blobs", "--input", str(request_path)], as_json=True, timeout=60)
         finally:
             request_path.unlink(missing_ok=True)
         return result["sha"], expected
@@ -253,7 +253,7 @@ class DesktopCloudController(CloudController):
         except Stopped:
             if self.run_id:
                 try:
-                    self.command(["run", "cancel", str(self.run_id), "--repo", REPOSITORY])
+                    self.command(["run", "cancel", str(self.run_id), "--repo", self.repository])
                 except CloudError:
                     pass
             self.update(status="Stopped", stage="已停止，测速进度已经保存")

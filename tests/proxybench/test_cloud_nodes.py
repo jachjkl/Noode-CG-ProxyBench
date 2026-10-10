@@ -13,6 +13,20 @@ from tests.proxybench import test_dashboard_pages, test_publication_controller
 
 
 class CloudNodesTests(unittest.TestCase):
+    def test_custom_destination_keeps_ranked_nodes_when_public_mirrors_fail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            publish(root/'output', test_publication_controller.winners(), {})
+            content = (root/'output/nodes.json').read_bytes()
+            client = Mock(settings={'state_dir': root, 'repository': 'other-owner/renamed', 'branch': 'release/v1'})
+            client.command.side_effect = ['a'*40, {'content': base64.b64encode(content).decode()}]
+            with patch('core.proxybench.cloud_nodes.download', side_effect=RuntimeError('mirrors unavailable')) as download:
+                report = read_published(client)
+            self.assertEqual(report['total'], 110)
+            self.assertEqual(client.command.call_args_list[0].args[0][1], 'repos/other-owner/renamed/commits/release%2Fv1')
+            self.assertTrue(all('other-owner/renamed' in url or 'other-owner' in url for url in download.call_args.args[2]))
+            self.assertEqual([r['rank'] for r in report['nodes']], list(range(1,111)))
+
     def test_failed_replenishment_keeps_the_last_confirmed_partial_publication_readable(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

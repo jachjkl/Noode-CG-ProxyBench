@@ -23,6 +23,12 @@ Direct mode uses the original `core/tcp_scan.py`, `core/tls_check.py` and `core/
 
 TCPing and TLS share one public subscription, `output/Npdex-Tcp/Tls.txt`, as requested by the owner. Every successful direct publication replaces it with the latest competition-tested ranking and saved counts. It matches the compatibility text at `output/Nodes-TCP/nodes.txt` exactly; metrics and health stay in that compatibility directory. The proxy subscription remains `output/nodes.txt`.
 
+## GitHub destination and account setup
+
+Open **Overall settings** in the left navigation to save a personal GitHub repository (`owner/name` or its official URL) and a branch. These settings survive normal cache cleanup and apply to discovery, published-list reads, competition and uploads in both engines. On another computer, sign in with the destination repository owner's account through the bundled GitHub CLI web login. Upload the complete cloud source, including `.github/workflows`, and enable Actions. The in-app Chinese guide walks through those steps.
+
+**Check connection** validates login, write permission, branch and both workflows without dispatching a job. Repository redirects identify a renamed destination and offer to save its canonical name. Incorrect destinations or authorization retain measured IPs and pending uploads for retry. Targets cannot change during measurement or publication. Owner checks use the configured repository owner rather than a hardcoded account; public mirrors receive no credentials. GitHub CLI manages authentication, and the application does not collect repository passwords. See [deployment](docs/DEPLOYMENT.md).
+
 ## Configurable publication counts
 
 Each method separately saves the ordinary TOP count (1–1000) and additional Japanese count (0–300). Examples include 100, 200 or 300 ordinary entries. Defaults are proxy 100 + 10 and direct 300 + 10. Japanese entries receive a separate quota and obey the same measurement rules. There are no duplicate IPs across the two lanes of a published method.

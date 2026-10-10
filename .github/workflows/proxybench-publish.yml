@@ -19,7 +19,7 @@ concurrency:
 jobs:
   cloud-publish:
     name: 云端发布最优IP
-    if: github.repository == 'jachjkl/Noode-CG-ProxyBench' && github.actor == 'jachjkl'
+    if: github.actor == github.repository_owner
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -31,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: main
+          ref: ${{ github.ref_name }}
       - name: Validate method namespace and configured automatic or manual quotas
         run: |
           python -c "import os,re;assert re.fullmatch('[a-f0-9]{40}',os.environ['RESULT_BLOB']);assert re.fullmatch('[a-f0-9]{64}',os.environ['RESULT_SHA256'])"
@@ -47,11 +47,11 @@ jobs:
           PY
       - name: Publish allowlisted output and session IP history
         run: |
-          test "$GITHUB_REPOSITORY" = "jachjkl/Noode-CG-ProxyBench"
+          test "$GITHUB_ACTOR" = "$GITHUB_REPOSITORY_OWNER"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- output data/handoff/proxybench-attempted.json.gz
           if ! git diff --cached --quiet; then
             git commit -m "chore(data): verified desktop proxy results [skip ci]"
-            git push origin HEAD:main
+            git push origin "HEAD:$GITHUB_REF_NAME"
           fi

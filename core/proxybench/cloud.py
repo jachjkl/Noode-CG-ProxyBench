@@ -16,11 +16,12 @@ from core.io_utils import atomic_write_json
 
 from .cloud_network import cloud_environment
 from .execution import cli_python
+from .github_destination import DEFAULT_REPOSITORY, load_destination
 from .mihomo_manager import owned_core_running
 from .profile import ProxyProfile, discover_profiles, import_discovered, refresh_existing, safe_error
 from .state import Control, RunLock, Stopped, Store
 
-REPOSITORY = "jachjkl/Noode-CG-ProxyBench"
+REPOSITORY = DEFAULT_REPOSITORY
 
 
 class CloudError(ValueError):
@@ -32,7 +33,10 @@ class CloudController:
     def __init__(self, settings: dict) -> None:
         self.settings = settings
         self.root = settings["root"]
-        self.runner_root = self.root / "runtime/runner"
+        target = load_destination(self.root, {"repository": settings.get("repository", REPOSITORY), "branch": settings.get("branch", "main")})
+        self.settings.update(target)
+        self.repository, self.branch = target["repository"], target["branch"]
+        self.runner_root = self.root / "runtime/runner" if self.repository == REPOSITORY else self.root / "runtime/runner-targets" / hashlib.sha256(self.repository.casefold().encode()).hexdigest()[:16]
         bundled = self.root / "runtime/gh/bin/gh.exe"
         self.gh = str(bundled) if bundled.exists() else shutil.which("gh")
         self.runner = None
@@ -46,12 +50,17 @@ class CloudController:
         path = self.settings["state_dir"] / "cloud-live.json"
         if values.get("status") == "Dispatching":
             self.live = {}
-        self.live.update(repository=REPOSITORY, **values)
+        self.live.update(repository=self.repository, **values)
         atomic_write_json(path, self.live)
 
     def command(self, args: list[str], *, timeout: float = 30, as_json: bool = False):
         if not self.gh:
             raise CloudError("缺少 GitHub CLI；请使用完整 Windows 运行包")
+        writing = args[:2] == ["workflow", "run"] or (args[:1] == ["api"] and "--method" in args and args[args.index("--method") + 1] != "GET")
+        if writing:
+            actor = self.command(["api", "user", "--jq", ".login"], timeout=8).strip()
+            if actor.casefold() != self.repository.split("/")[0].casefold():
+                raise CloudError("当前 GitHub 登录账号与目标仓库所有者不一致；请在整体设置中登录正确账号，已测 IP 已保留")
         result = subprocess.run([self.gh, *args], capture_output=True, encoding="utf-8", errors="replace", timeout=timeout,
                                 env=cloud_environment(),
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
@@ -63,8 +72,8 @@ class CloudController:
         if os.name != "nt":
             raise CloudError("本地自动控制器需要 Windows")
         actor = self.command(["api", "user", "--jq", ".login"]).strip()
-        if actor != "jachjkl":
-            raise CloudError("请在 GitHub CLI 登录 jachjkl 账户")
+        if actor.casefold() != self.repository.split("/")[0].casefold():
+            raise CloudError("请登录目标仓库的所有者账号，再开始云端任务")
         self.runner_root.mkdir(parents=True, exist_ok=True)
         executable = self.runner_root / "bin/Runner.Listener.exe"
         if not executable.exists():
@@ -88,14 +97,14 @@ class CloudController:
         registration = self.runner_root / ".runner"
         if registration.exists():
             registered = json.loads(registration.read_text(encoding="utf-8-sig"))
-            if registered.get("gitHubUrl", "").rstrip("/") != f"https://github.com/{REPOSITORY}":
+            if registered.get("gitHubUrl", "").rstrip("/") != f"https://github.com/{self.repository}":
                 raise CloudError("Runner 归属不是新仓库，拒绝修改")
         else:
             self.update(stage="为新仓库注册独立本机执行器", status="Preparing")
             # Token exists only in memory and official Runner credential storage. Never log command arguments.
-            token = self.command(["api", "--method", "POST", f"repos/{REPOSITORY}/actions/runners/registration-token"], as_json=True)["token"]
+            token = self.command(["api", "--method", "POST", f"repos/{self.repository}/actions/runners/registration-token"], as_json=True)["token"]
             suffix = hashlib.sha256(str(self.root).encode()).hexdigest()[:8]
-            configured = subprocess.run([str(executable), "configure", "--unattended", "--url", f"https://github.com/{REPOSITORY}",
+            configured = subprocess.run([str(executable), "configure", "--unattended", "--url", f"https://github.com/{self.repository}",
                                          "--token", token, "--name", f"Noode-ProxyBench-{socket.gethostname()}-{suffix}",
                                          "--labels", "noode-cg-proxybench", "--work", "_work"],
                                         cwd=self.runner_root, env=cloud_environment(), capture_output=True, timeout=120,
@@ -128,9 +137,9 @@ class CloudController:
         registered = json.loads(registration.read_text(encoding="utf-8-sig"))
         suffix = hashlib.sha256(str(self.root).encode()).hexdigest()[:8]
         expected_name = f"Noode-ProxyBench-{socket.gethostname()}-{suffix}"
-        if registered.get("gitHubUrl", "").rstrip("/") != f"https://github.com/{REPOSITORY}" or registered.get("agentName") != expected_name:
+        if registered.get("gitHubUrl", "").rstrip("/") != f"https://github.com/{self.repository}" or registered.get("agentName") != expected_name:
             raise CloudError("Runner 清理归属不匹配")
-        token = self.command(["api", "--method", "POST", f"repos/{REPOSITORY}/actions/runners/remove-token"], as_json=True)["token"]
+        token = self.command(["api", "--method", "POST", f"repos/{self.repository}/actions/runners/remove-token"], as_json=True)["token"]
         try:
             removed = subprocess.run([str(self.runner_root / "bin/Runner.Listener.exe"), "remove", "--unattended", "--token", token],
                                      cwd=self.runner_root, env=cloud_environment(), capture_output=True, timeout=60,
@@ -147,11 +156,11 @@ class CloudController:
         live_path = self.settings["state_dir"] / "live.json"
         prior = json.loads(live_path.read_text(encoding="utf-8")) if live_path.exists() else {}
         self.update(session_id=session_id, dispatch_id=request_id, local_before_dispatch=prior.get("workflow_run_id", ""))
-        self.command(["workflow", "run", "proxybench.yml", "--repo", REPOSITORY, "--ref", "main", "-f",
+        self.command(["workflow", "run", "proxybench.yml", "--repo", self.repository, "--ref", self.branch, "-f",
                       f"session_id={session_id}", "-f", f"dispatch_id={request_id}", "-f", f"reuse_handoff={str(reuse).lower()}", "-f", "prepare_only=false"])
         for _ in range(30):
             self.control.checkpoint()
-            runs = self.command(["run", "list", "--repo", REPOSITORY, "--workflow", "proxybench.yml", "--limit", "20",
+            runs = self.command(["run", "list", "--repo", self.repository, "--workflow", "proxybench.yml", "--limit", "20",
                                  "--json", "databaseId,createdAt,event,status,displayTitle"], as_json=True)
             fresh = [x for x in runs if x.get("event") == "workflow_dispatch"
                      and request_id in x.get("displayTitle", "")]
@@ -207,7 +216,7 @@ class CloudController:
         while True:
             self.control.checkpoint()
             try:
-                run = self.command(["run", "view", str(self.run_id), "--repo", REPOSITORY,
+                run = self.command(["run", "view", str(self.run_id), "--repo", self.repository,
                                     "--json", "status,conclusion,url,jobs"], as_json=True)
             except (CloudError, subprocess.TimeoutExpired):
                 self.update(monitor_warning="云端状态读取暂时失败，正在重试；本地测量继续")
@@ -312,7 +321,7 @@ class CloudController:
             return {"status": "needs_more", "published": False, "run_url": run["url"]}
         except Stopped:
             if self.run_id:
-                self.command(["run", "cancel", str(self.run_id), "--repo", REPOSITORY])
+                self.command(["run", "cancel", str(self.run_id), "--repo", self.repository])
             self.update(status="Stopped", stage="停止请求已交给本地任务，进度已经保存")
             return {"status": "stopped"}
         except Exception as exc:

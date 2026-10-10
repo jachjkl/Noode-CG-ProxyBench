@@ -29,6 +29,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   cloud-prepare:
+    if: github.actor == github.repository_owner
     name: 云端自动获取候选IP
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -59,7 +60,7 @@ jobs:
         id: commit
         shell: bash
         run: |
-          test "$GITHUB_REPOSITORY" = "jachjkl/Noode-CG-ProxyBench"
+          test "$GITHUB_ACTOR" = "$GITHUB_REPOSITORY_OWNER"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- data/handoff/proxybench-pool.json.gz data/handoff/proxybench-cloud-health.json data/handoff/proxybench-session-history.json.gz
@@ -73,7 +74,7 @@ jobs:
         run: python scripts/proxybench_channel.py encode --kind handoff
       - name: Prepare trusted mirror download metadata
         run: |
-          python -c "import json,os;from pathlib import Path;p=Path(os.environ['RUNNER_TEMP'])/'handoff.json';r=json.loads(Path('data/handoff/proxybench-cloud-health.json').read_text());p.write_text(json.dumps({'repository':'jachjkl/Noode-CG-ProxyBench','ref':'${{ steps.commit.outputs.ref }}','sha256':'${{ steps.commit.outputs.pool_sha256 }}','session_id':r['session_id']}),encoding='utf-8')"
+          python -c "import json,os;from pathlib import Path;p=Path(os.environ['RUNNER_TEMP'])/'handoff.json';r=json.loads(Path('data/handoff/proxybench-cloud-health.json').read_text());p.write_text(json.dumps({'repository':os.environ['GITHUB_REPOSITORY'],'ref':'${{ steps.commit.outputs.ref }}','sha256':'${{ steps.commit.outputs.pool_sha256 }}','session_id':r['session_id']}),encoding='utf-8')"
       - name: Save trusted mirror download metadata
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -82,7 +83,7 @@ jobs:
   local-select:
     name: 本地真实代理测速
     needs: cloud-prepare
-    if: inputs.prepare_only != true && github.repository == 'jachjkl/Noode-CG-ProxyBench' && github.event_name == 'workflow_dispatch' && (github.actor == 'jachjkl' || github.actor == 'github-actions[bot]')
+    if: inputs.prepare_only != true && github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner
     runs-on: [self-hosted, windows, x64, noode-cg-proxybench]
     timeout-minutes: 350
     permissions: {}
@@ -115,7 +116,7 @@ jobs:
           Set-Location -LiteralPath $env:NOODE_PROXYBENCH_APP
           $file = Join-Path $env:RUNNER_TEMP 'proxybench-handoff.b64'
           [IO.File]::WriteAllText($file, '${{ needs.cloud-prepare.outputs.payload_0 }}${{ needs.cloud-prepare.outputs.payload_1 }}${{ needs.cloud-prepare.outputs.payload_2 }}${{ needs.cloud-prepare.outputs.payload_3 }}${{ needs.cloud-prepare.outputs.payload_4 }}${{ needs.cloud-prepare.outputs.payload_5 }}', [Text.UTF8Encoding]::new($false))
-          & $env:NOODE_PYTHON scripts/sync_cloud_handoff.py --repository jachjkl/Noode-CG-ProxyBench --ref '${{ needs.cloud-prepare.outputs.handoff_ref }}' --relative-path data/handoff/proxybench-pool.json.gz --destination data/handoff/proxybench-pool.json.gz --sha256 '${{ needs.cloud-prepare.outputs.pool_sha256 }}'
+          & $env:NOODE_PYTHON scripts/sync_cloud_handoff.py --repository $env:GITHUB_REPOSITORY --ref '${{ needs.cloud-prepare.outputs.handoff_ref }}' --relative-path data/handoff/proxybench-pool.json.gz --destination data/handoff/proxybench-pool.json.gz --sha256 '${{ needs.cloud-prepare.outputs.pool_sha256 }}'
           # The authenticated Runner channel remains a checked final fallback when every mirror is unavailable.
           & $env:NOODE_PYTHON scripts/proxybench_channel.py decode --kind handoff --file $file --sha256 '${{ needs.cloud-prepare.outputs.sha256 }}'
           if ($LASTEXITCODE -ne 0) { throw 'Invalid handoff' }
@@ -165,7 +166,7 @@ jobs:
       - name: Publish only to the independent repository
         shell: bash
         run: |
-          test "$GITHUB_REPOSITORY" = "jachjkl/Noode-CG-ProxyBench"
+          test "$GITHUB_ACTOR" = "$GITHUB_REPOSITORY_OWNER"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- output data/handoff/proxybench-attempted.json.gz
@@ -176,7 +177,7 @@ jobs:
   local-confirm:
     name: 本地确认发布完成
     needs: [local-select, cloud-publish]
-    if: github.repository == 'jachjkl/Noode-CG-ProxyBench' && github.event_name == 'workflow_dispatch' && (github.actor == 'jachjkl' || github.actor == 'github-actions[bot]')
+    if: github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner
     runs-on: [self-hosted, windows, x64, noode-cg-proxybench]
     permissions: {}
     defaults:

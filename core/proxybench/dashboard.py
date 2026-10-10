@@ -78,16 +78,28 @@ class BenchDashboard:
         if self.cloud_refresh_thread and self.cloud_refresh_thread.is_alive():
             return
         def fetch():
-            from .cloud_nodes import refresh
+            from .cloud_nodes import read_published
             from .desktop_cloud import DesktopCloudController
+            settings = dict(self.settings)
+            target = (settings["repository"], settings["branch"])
             try:
-                client = DesktopCloudController(self.settings)
+                client = DesktopCloudController(settings)
                 client.update = lambda **_: None  # Auxiliary reads must not overwrite the active workflow status.
                 client.control.path = self.settings["state_dir"] / "cloud-read-control.json"
                 client.control.path.unlink(missing_ok=True)
-                self.cloud_published = refresh(client)
+                report = read_published(client)
+                with self.lock:
+                    if target == (self.settings["repository"], self.settings["branch"]):
+                        atomic_write_json(self.settings["state_dir"] / "cloud-published.json", report)
+                        self.cloud_published = report
             except Exception:
-                self.cloud_published = {**self.cloud_published, "status": "Unavailable", "message": "云端读取暂时失败，可点击刷新；已缓存的发布顺序保持不变"}
+                with self.lock:
+                    if target == (self.settings["repository"], self.settings["branch"]):
+                        self.cloud_published = {**self.cloud_published, "status": "Unavailable", "message": "云端读取暂时失败，可点击刷新；已缓存的发布顺序保持不变"}
+            finally:
+                if target != (self.settings["repository"], self.settings["branch"]):
+                    self.cloud_refresh_thread = None
+                    self.refresh_cloud()
         self.cloud_refresh_thread = threading.Thread(target=fetch, daemon=True)
         self.cloud_refresh_thread.start()
 

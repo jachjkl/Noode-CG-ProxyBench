@@ -110,6 +110,8 @@ def load_settings(config_path: str | Path) -> dict:
               "speed_url": block.get("speed_url", "https://dl.google.com/chrome/install/standalonesetup64.exe"),
               "geo_urls": block.get("geo_urls", ["https://ipwho.is/", "https://api.country.is/"]),
               "rules": validate_rules({**block.get("rules", {}), "round_count": 1})}
+    from .github_destination import load_destination
+    result.update(load_destination(root, block))
     if result["official_sample_count"] < 1 or not 0 <= result["max_cycles"] <= 30:
         raise ValueError("候选规模或补池轮数错误")
     return result
