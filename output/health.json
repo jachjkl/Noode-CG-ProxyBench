@@ -1,8 +1,8 @@
 {
-  "seed": "bb92e7119c4ccf790bf8bc9e4af674be",
+  "seed": "84cdf7298e376e9a707262a514fe9b41",
   "fixed_sources": {
     "fixed-source-a": 11093,
-    "fixed-source-b": 185
+    "fixed-source-b": 186
   },
   "fixed_fetched_this_round": true,
   "fixed_source_count": 11238,
@@ -35,28 +35,28 @@
     "gslege-jp-hint": false
   },
   "continuation": false,
-  "session_id": "609f0c0945589f106914103a63fe42f9",
+  "session_id": "bbd79e5e23790f6e9685cc82a09072b5",
   "cycle": 1,
   "status": "ok",
   "publication_limits": {
-    "general": 200,
+    "general": 100,
     "japan": 10
   },
   "measurement_mode": "proxy",
-  "manual_publication": true,
-  "tested_count": 2769,
-  "qualified_count": 469,
-  "jp_qualified_count": 27,
+  "manual_publication": false,
+  "tested_count": 21257,
+  "qualified_count": 2493,
+  "jp_qualified_count": 97,
   "mihomo_version": "v1.19.32",
   "batch_total": 213,
-  "batch_completed": 28,
-  "run_id": "822c2b0e90220ffad0bbc9270d7eb25c",
-  "previous_general_competitors": 294,
+  "batch_completed": 213,
+  "run_id": "296398a08d3c3630de9b71e93732e408",
+  "previous_general_competitors": 100,
   "publish_gate_passed": true,
   "published": true,
   "needs_more": false,
   "quota_complete": true,
-  "general_final_count": 200,
+  "general_final_count": 100,
   "jp_final_count": 10,
-  "unique_final_count": 210
+  "unique_final_count": 110
 }
