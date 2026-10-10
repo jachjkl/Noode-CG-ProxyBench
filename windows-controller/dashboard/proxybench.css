@@ -181,14 +181,14 @@ body.dual-app{--bg:#101312;--panel:#1b211e;--line:#38433b;--foreground:#f0f4ef;-
 .batch-visual-grid:empty::after{display:none}
 .batch-honeycomb-panel .batch-node{position:absolute;transform:none}
 .batch-node.waiting{--hex-line:#4c624c;--hex-fill:#243629}
-.batch-node.passed{--hex-line:#7fffaa;--hex-fill:linear-gradient(145deg,#10b850,#3cfb7b);filter:drop-shadow(0 0 6px #3cff79aa)}
-.batch-node.passed .hex-face{color:#fff;font-size:18px;font-weight:700;box-shadow:inset 0 0 15px #8effbf80}
+.batch-node.passed{--hex-line:#a0c27688;--hex-fill:radial-gradient(ellipse at 50% 115%,rgba(223,245,162,.22),transparent 75%),linear-gradient(130deg,rgba(24,84,57,.82),rgba(40,112,74,.82));filter:drop-shadow(0 0 4px #b5ed8b44)}
+.batch-node.passed .hex-face{color:#fff;font-size:18px;font-weight:700;box-shadow:inset 0 1px 0 #dafa8f30,inset 0 -7px 12px #e8ef9624}
 .batch-node.passed .hex-face::before{content:"";position:absolute;bottom:-9px;left:20%;width:2px;height:2px;border-radius:50%;background:#fff;box-shadow:12px 5px #c8ffe4,24px -4px #edfff5,36px 7px #a2ffd0;pointer-events:none;animation:hex-pass-particles 2.8s linear infinite}
 .batch-node.passed:nth-child(3n) .hex-face::before{animation-delay:-.9s}.batch-node.passed:nth-child(3n+1) .hex-face::before{animation-delay:-1.8s}
-.batch-node.failed{--hex-line:#ff7981;--hex-fill:linear-gradient(145deg,#b71b2b,#ff374d);filter:drop-shadow(0 0 6px #ff324faa)}
-.batch-node.failed .hex-face{color:#fff;font-weight:700;box-shadow:inset 0 0 14px #ff829666}
-.batch-legend .passed::before{background:#20d86a;color:#fff}.batch-legend .failed::before{background:#f63049;color:#fff}
-@keyframes hex-pass-particles{0%{transform:translate(0,0);opacity:0}15%{opacity:.95}80%{opacity:.7}100%{transform:translate(8px,calc(-1 * var(--hex-height)));opacity:0}}
+.batch-node.failed{--hex-line:#ff69778c;--hex-fill:linear-gradient(145deg,rgba(168,38,54,.76),rgba(229,54,74,.76));filter:drop-shadow(0 0 4px #ff536244)}
+.batch-node.failed .hex-face{color:#fff;font-weight:700;box-shadow:inset 0 0 12px #ff8c9f38}
+.batch-legend .passed::before{background:rgba(40,112,74,.86);color:#fff}.batch-legend .failed::before{background:rgba(229,54,74,.82);color:#fff}
+@keyframes hex-pass-particles{0%{transform:translate(0,0);opacity:0}15%{opacity:.7}80%{opacity:.5}100%{transform:translate(8px,calc(-1 * var(--hex-height)));opacity:0}}
 .page-hidden .batch-node.passed .hex-face::before,.batch-progress-panel.motion-offscreen .batch-node.passed .hex-face::before{animation-play-state:paused}
 @media(prefers-reduced-motion:reduce){.batch-node.passed .hex-face::before{display:none}}
 @media(max-width:1000px){.batch-progress-layout{grid-template-columns:300px minmax(0,1fr)}.batch-overview{display:block}.batch-honeycomb-panel{padding:0}.batch-tally{grid-column:auto;grid-row:auto;margin:12px 0 10px;text-align:left}.batch-overview progress{grid-column:auto;grid-row:auto}.dual-app #batchVisualState{margin-top:10px}}
