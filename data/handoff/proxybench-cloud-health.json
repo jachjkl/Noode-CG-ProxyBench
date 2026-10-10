@@ -1,9 +1,9 @@
 {
-  "seed": "cddcfc6da89dd90f02565cec8bc84d92",
+  "seed": "bb75c8cc3e904b862ebdc27309707ca5",
   "fixed_sources": {},
   "fixed_fetched_this_round": false,
   "fixed_source_count": 0,
-  "excluded_ip_count": 47263,
+  "excluded_ip_count": 57263,
   "cloudflare_official_count": 10000,
   "jp_supplement_count": 19,
   "authorized_proxy_count": 0,
@@ -33,5 +33,5 @@
   },
   "continuation": true,
   "session_id": "55aeae75a95b8595dc934983db7c39dc",
-  "cycle": 4
+  "cycle": 5
 }
