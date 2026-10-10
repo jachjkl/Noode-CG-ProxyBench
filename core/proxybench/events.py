@@ -6,7 +6,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-STATES = {"Running": "运行中", "Stopped": "已停止并保存", "Failed": "运行失败", "Paused": "已暂停",
+STATES = {"Location Testing": "正在确认位置", "Running": "运行中", "Stopped": "已停止并保存", "Failed": "运行失败", "Paused": "已暂停",
           "Loading Proxy": "正在加载候选节点", "Speed Testing": "正在测量下载速度", "completed": "本轮优选完成",
           "needs_more": "合格数量不足，准备补充候选", "Qualified": "通过", "Rejected Entry": "入口连接失败或延迟超限",
           "Rejected Loss": "请求失败率超限", "Rejected Latency": "平均延迟超限", "Rejected Speed": "下载速度不合格",

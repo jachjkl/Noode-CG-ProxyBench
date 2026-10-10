@@ -26,3 +26,10 @@ Manual publication queues a request until the current batch completes, or starts
 ## Honeycomb and operation layout (1.2.6)
 
 The dashboard renders the same batch state as staggered, point-up hexagons, with 20 columns on wide windows and 10 on narrow ones. Each cell has an address/status label and tooltip; completion symbols provide a cue beyond color. Unchanged previews reuse existing cells, and changed outcomes update those cells in place. Cleanup removes the current cells and resets the existing progress counter. The operation toolbar groups launch, playback and output controls without changing API actions. CSS controls responsive wrapping, active-cell motion and reduced-motion handling; backend measurement rules are unchanged.
+
+
+## Continuous requests and live qualification (1.2.7)
+
+`Benchmark.batch` queues all three site work items per candidate and refills available request slots as soon as any request finishes. The saved request concurrency is a global request limit, not a multiplied per-site limit. All three results are required before the existing calculator accepts or rejects the candidate. Download concurrency remains unchanged; successful downloads hand off to a separate bounded location executor. Pending location records are explicitly unqualified and carry no completed timestamp. Ordered persistence and cleanup still finish before the next 100-IP batch.
+
+The `qualified-results` dashboard action filters fully finished `Qualified` records after reapplying current saved limits, then sorts them with the normal ranking key before independent 300-row pagination. Historical or in-flight passes cannot populate this view prematurely. The native core dialog renders both retained version slots while measurement is active, explains why switching is disabled, and uses `core-check` to review updates without resetting a pinned rollback choice. Explicitly selecting automatic updates still clears that choice.

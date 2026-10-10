@@ -127,3 +127,37 @@ body.dual-app{--bg:#101312;--panel:#1b211e;--line:#38433b;--foreground:#f0f4ef;-
 @media(max-width:1000px){.batch-progress-layout{grid-template-columns:1fr;gap:16px}.batch-overview{display:grid;grid-template-columns:1fr auto;gap:8px 20px}.batch-title{align-self:start}.batch-tally{grid-column:2;grid-row:1/3;margin:0;text-align:right}#batchVisualCount{font-size:28px}.batch-overview progress{grid-column:1;grid-row:2;align-self:center}.dual-app #batchVisualState{grid-column:1/-1;max-width:none;margin:0}.batch-honeycomb-panel{border-left:0;border-top:1px solid #3b493d;padding:12px 0 0}.batch-visual-grid{--hex-width:clamp(20px,3.4vw,30px)}}
 @media(max-width:600px){.dual-app .method-option{min-height:102px;padding:10px 8px}.command-actions{padding:8px}.dual-app .run-actions{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.dual-app .run-actions .button{padding:10px 8px;font-size:12px;gap:6px}.dual-app .run-actions [data-action=start]{min-width:0}.batch-progress-layout{gap:12px}.batch-title{display:grid;gap:3px}#batchVisualCount{font-size:25px}.batch-visual-grid{--hex-width:clamp(20px,6.25vw,30px);grid-template-columns:repeat(10,var(--hex-width));min-height:0}.batch-node{transform:translateX(calc(var(--hex-small-offset) * (var(--hex-width) + var(--hex-gap)) / 2))}.batch-visual-grid:empty{min-height:110px}.batch-progress-details{font-size:11px}.batch-legend{gap:10px}.batch-legend .batch-hint{display:none}}
 @media(prefers-reduced-motion:reduce){.hex-face,.batch-progress-panel progress::-webkit-progress-value{animation:none!important;transition:none!important}}
+
+/* Quieter honeycomb surfaces, with a luminous rim for active requests. */
+.batch-progress-layout{gap:18px}
+.batch-honeycomb-panel{container-type:inline-size;background:#151e18;border:1px solid #354739;border-radius:10px;padding:16px 18px}
+.batch-visual-grid{--hex-gap:2px;--hex-width:calc((100cqw - 39px) / 20.5);padding:0 calc((var(--hex-width) + var(--hex-gap)) / 2) calc(var(--hex-height) * .25) 0;min-height:0;margin:4px 0 0}
+.batch-node{--hex-line:#405143;--hex-fill:#1e2a22}
+.hex-face{inset:1.5px;font-weight:500;color:transparent}
+.batch-node.active{--hex-line:#aec976;--hex-fill:linear-gradient(150deg,#34452b,#263725)}
+.batch-node.active .hex-face{color:transparent;animation:hex-breathe 2.8s ease-in-out infinite}
+.batch-node.active .hex-face::after{content:"";position:absolute;width:5px;height:5px;border-radius:50%;background:#d5e88e;box-shadow:0 0 9px #d5e88e66}
+.batch-node.passed{--hex-line:#72a771;--hex-fill:linear-gradient(145deg,#214b36,#365b3f)}
+.batch-node.passed .hex-face{color:#c0e7a7;font-size:13px}
+.batch-node.failed{--hex-line:#775650;--hex-fill:#302622}
+.batch-node.failed .hex-face{color:#c89487;font-size:13px}
+.batch-node:hover{--hex-line:#e4e9b0}
+.batch-node:hover .hex-face{color:#eff8df}
+.batch-node.active:hover .hex-face::after{display:none}
+.batch-progress-details{margin-bottom:10px}
+.batch-legend{margin-top:14px!important}
+.batch-progress-panel.motion-offscreen .batch-node.active .hex-face{animation-play-state:paused}
+@media(min-width:1600px){.batch-visual-grid{--hex-width:calc((100cqw - 49px) / 25.5);grid-template-columns:repeat(25,var(--hex-width))}.batch-node{transform:translateX(calc(var(--hex-wide-offset) * (var(--hex-width) + var(--hex-gap)) / 2))}}
+.core-trigger{display:flex;width:100%;min-height:44px;align-items:center;justify-content:space-between;gap:10px;border:0;background:none;padding:5px 0;color:#d9e8ca;text-align:left;cursor:pointer}
+.core-trigger:hover .core-trigger-arrow{color:#e5f09b}.core-trigger-arrow{font-size:20px}
+.core-version-dialog{width:min(520px,calc(100vw - 32px));max-width:none;box-sizing:border-box;padding:24px;background:#1b261e;border:1px solid #7a9168;border-radius:16px;box-shadow:0 24px 100px #0009;color:#edf5e8}
+.core-version-dialog::backdrop{background:#07100bd9;backdrop-filter:blur(5px)}
+.core-dialog-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:20px}.core-dialog-heading h2{font-size:20px}.core-dialog-heading p{color:#b6c7b0;font-size:12px;line-height:1.7;margin:6px 0 0}
+.dual-app .icon-button{min-width:44px;min-height:44px;padding:0;font-size:24px;line-height:1;border-radius:8px;flex-shrink:0}
+.core-version-history{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:20px}
+.core-version-record{display:grid;gap:8px;padding:16px;background:#17201a;border:1px solid #465844;border-radius:10px}.core-version-record.current{background:linear-gradient(135deg,#234d34,#203a2b);border-color:#87aa6e}.core-version-record>span{font-size:12px;color:#b6c9ab}.core-version-record>strong{font-size:21px;font-variant-numeric:tabular-nums;color:#edf7de}.core-version-record>small{font-size:11px;line-height:1.6;color:#bdd2b3}.core-history-empty{grid-column:1/-1;font-size:12px;line-height:1.7;color:#bec9b6;margin:0;padding:12px;border:1px dashed #56664b;border-radius:8px}
+.core-picker label{display:block;margin-bottom:8px;font-size:13px;font-weight:600}.core-picker select{box-sizing:border-box;width:100%;min-height:46px;padding:11px 12px;border:1px solid #738665;border-radius:8px;background:#111d15;color:#edf5e8;font-size:14px}.core-picker select:disabled{opacity:.55}.core-picker p{margin:9px 0 0;font-size:12px;line-height:1.7;color:#b4c5aa}
+.core-update-message{margin:16px 0;padding:12px;background:#283729;border-left:3px solid #b9d77c;border-radius:4px;font-size:12px;line-height:1.7;color:#d5e6c3}
+.core-dialog-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid #3e513f;padding-top:16px}.core-dialog-footer>span{font-size:11px;color:#b1c3a7}
+@media(max-width:1000px){.batch-honeycomb-panel{padding:14px 16px;border-top:1px solid #354739}}
+@media(max-width:600px){.batch-honeycomb-panel{padding:12px}.batch-visual-grid{--hex-width:calc((100cqw - 19px) / 10.5)}.core-version-dialog{padding:18px}.core-version-record{padding:12px}.core-version-record>strong{font-size:18px}.core-dialog-footer{align-items:flex-start;flex-direction:column}.core-dialog-footer .button{width:100%}}

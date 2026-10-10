@@ -10,7 +10,7 @@ import time
 
 from core.io_utils import atomic_write_json
 
-from .benchmark import limit_failure
+from .benchmark import limit_failure, ranking_key
 from .events import EventLog
 from .execution import cli_python
 from .mihomo_manager import owned_core_running
@@ -161,6 +161,8 @@ class BenchDashboard:
             rows.sort(key=lambda row: (f"{row['ip']}:{row['port']}" in active_keys, row.get("tested_at", "")), reverse=True)
         elif kind == "results":
             rows = [row for row in measured.values() if row.get("tested_at") and row.get("status") != "Rejected Entry"]
+        elif kind == "qualified-results":
+            rows = sorted((row for row in measured.values() if row.get("tested_at") and row.get("qualified") and row.get("status") == "Qualified"), key=ranking_key)
         else:
             cumulative = settings["state_dir"] / "candidate-pool.json.gz"
             if same_pool and cumulative.exists():
@@ -366,7 +368,7 @@ class BenchDashboard:
                         "message": "正在复测并推送已有合格结果；本次不获取新 IP" if action == "publish" else "任务已启动，获取与实测结果会自动更新"}
             if action == "cloud-start":
                 return self.action("auto-start", {})
-            if action in {"results", "live-results", "candidates", "published-results", "competition-results"}:
+            if action in {"results", "live-results", "qualified-results", "candidates", "published-results", "competition-results"}:
                 return self.rows(action, int(payload.get("page", int(payload.get("offset", 0)) // 300 + 1)))
             raise ValueError("未知操作")
 

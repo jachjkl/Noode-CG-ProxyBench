@@ -104,26 +104,27 @@ class Benchmark:
                    "probes": {site: [] for site, _, _ in SITES}, "qualified": False,
                    "download_rounds_mbps": [], "rules": rules, "status": "Loading Proxy",
                    "probe_method": "named-proxy-single-http-v3", "latency_targets": {site: url for site, url, _ in self.sites}} for item in candidates}
+        for record in records.values():
+            record.pop("tested_at", None)
         self.update(stage="单轮测试三个网站", status="Running", batch_input_count=len(records),
                     batch_probe_completed=0, batch_probe_total=len(records) * 3, batch_latency_completed=0)
-        concurrency = min(rules["delay_concurrency"], 24) if rules.get("adaptive_concurrency") else rules["delay_concurrency"]
+        concurrency = rules["delay_concurrency"]
         counters = {"probes": 0, "latency": 0}
-        def worker(name):
+        def worker(name, site, url, expected):
             record = records[name]
-            for site, url, expected in self.sites:
-                self.control.checkpoint()
-                with self.activity_lock:
-                    record.update(status="Round 1", active_site=site, active_round=1)
-                    self.update(candidates=list(records.values()))
-                probe_method = getattr(self.manager.controller, "site_probe", None)
-                probe = (probe_method if callable(probe_method) else self.manager.controller.delay)(name, url, expected, rules["request_timeout_seconds"])
-                with self.activity_lock:
-                    record["probes"][site].append(probe)
-                    record.update(status="Round 1", active_site=site, active_round=1)
-                    counters["probes"] += 1
+            self.control.checkpoint()
+            with self.activity_lock:
+                record.update(status="Round 1", active_site=site, active_round=1)
+                self.update(candidates=list(records.values()))
+            probe_method = getattr(self.manager.controller, "site_probe", None)
+            probe = (probe_method if callable(probe_method) else self.manager.controller.delay)(name, url, expected, rules["request_timeout_seconds"])
+            with self.activity_lock:
+                record["probes"][site].append(probe)
+                counters["probes"] += 1
+                if not all(record["probes"][site] for site, _, _ in self.sites):
                     self.update(candidates=list(records.values()), batch_probe_completed=counters["probes"],
                                 batch_latency_completed=counters["latency"])
-            with self.activity_lock:
+                    return probe
                 calculate(record, rules)
                 record["proxy_probe_count"] = 3
                 record["status"] = "Latency Passed" if record["latency_passed"] else "Rejected Loss" if record["proxy_loss_percent"] > rules["max_proxy_loss_percent"] else "Rejected Latency"
@@ -135,26 +136,35 @@ class Benchmark:
                     self.finish(record, completed)
                 counters["latency"] += 1
                 self.update(candidates=list(records.values()), batch_latency_completed=counters["latency"], batch_probe_completed=counters["probes"])
-        names = list(records)
+            return probe
+        tasks = iter((name, site, url, expected) for name in records for site, url, expected in self.sites)
         with concurrent.futures.ThreadPoolExecutor(max_workers=rules["delay_concurrency"]) as executor:
-            offset = 0
-            while offset < len(names):
+            pending = set()
+            window = []
+            exhausted = False
+            while pending or not exhausted:
                 self.control.checkpoint()
-                group = names[offset:offset + concurrency]
-                offset += len(group)
-                futures = [executor.submit(worker, name) for name in group]
+                while not exhausted and len(pending) < concurrency:
+                    task = next(tasks, None)
+                    if task is None:
+                        exhausted = True
+                    else:
+                        pending.add(executor.submit(worker, *task))
+                if not pending:
+                    break
+                finished, pending = concurrent.futures.wait(pending, return_when=concurrent.futures.FIRST_COMPLETED)
                 try:
-                    for future in concurrent.futures.as_completed(futures):
-                        future.result()
+                    for future in finished:
+                        window.append(future.result())
                 except BaseException:
-                    for future in futures:
+                    for future in pending:
                         future.cancel()
                     raise
-                if rules.get("adaptive_concurrency"):
-                    probes = [p for name in group for values in records[name]["probes"].values() for p in values]
-                    successful = [p["latency_ms"] for p in probes if p["success"]]
-                    if successful and len(successful) / len(probes) < .7 and statistics.median(successful) > rules["request_timeout_seconds"] * 600:
+                if rules.get("adaptive_concurrency") and len(window) >= max(8, concurrency):
+                    successful = [p["latency_ms"] for p in window if p["success"]]
+                    if successful and len(successful) / len(window) < .7 and statistics.median(successful) > rules["request_timeout_seconds"] * 600:
                         concurrency = max(1, concurrency // 2)
+                    window.clear()
                 self.update(effective_concurrency=concurrency)
         return self.finish_measurements(records, completed)
 
@@ -176,19 +186,32 @@ class Benchmark:
             self.update(stage="Speed Testing", candidates=list(records.values()))
             # Each production candidate has its own listener/rule, avoiding shared-selector races.
             workers = rules["speed_concurrency"] if getattr(self.manager.controller, "named_ports", None) else 1
-            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-                futures = {executor.submit(self.speed_result, name, result): name for name, result in pending_speed}
-                for future in concurrent.futures.as_completed(futures):
-                    name = futures[future]
-                    records[name] = future.result()
-                    self.finish(records[name], completed)
-                    self.update(candidates=list(records.values()))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor, \
+                 concurrent.futures.ThreadPoolExecutor(max_workers=min(8, rules["delay_concurrency"])) as locations:
+                futures = {executor.submit(self.speed_result, name, result): (name, "speed") for name, result in pending_speed}
+                while futures:
+                    done, _ = concurrent.futures.wait(futures, return_when=concurrent.futures.FIRST_COMPLETED)
+                    for future in done:
+                        name, phase = futures.pop(future)
+                        records[name] = future.result()
+                        if phase == "speed" and records[name]["qualified"]:
+                            location_record = copy.deepcopy(records[name])
+                            records[name].update(status="Location Testing", qualified=False)
+                            futures[locations.submit(self.location_result, name, location_record)] = (name, "location")
+                        else:
+                            self.finish(records[name], completed)
+                        self.update(candidates=list(records.values()))
         return list(records.values())
 
     def finish(self, result: dict, completed) -> None:
         from datetime import UTC, datetime
         result["tested_at"] = datetime.now(UTC).isoformat()
         completed(result)
+
+    def location_result(self, name: str, record: dict) -> dict:
+        result = copy.deepcopy(record)
+        result.update(self.geo(name), status="Qualified")
+        return result
 
     def speed_result(self, name: str, record: dict) -> dict:
         with self.activity_lock:
@@ -223,6 +246,4 @@ class Benchmark:
                       proxy_download_average_mbytes=statistics.fmean(speeds) / 8)
         result["qualified"] = all(item["success"] for item in downloads) and statistics.fmean(speeds) >= self.rules["min_proxy_speed_mbps"]
         result["status"] = "Qualified" if result["qualified"] else "Rejected Speed"
-        if result["qualified"]:
-            result.update(self.geo(name))
         return result

@@ -9,18 +9,32 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from core.proxybench.controller import Controller, CoreError
 from core.proxybench.direct_benchmark import DirectManager
 from core.proxybench.mihomo_manager import MihomoManager
 from core.proxybench.modes import mode_settings
+from core.proxybench.multi_dashboard import MultiModeDashboard
 from core.proxybench.pipeline import Pipeline
 from core.proxybench.settings import load_settings
 from tests.proxybench.test_benchmark import pool
 
 
 class CoreVersionHistoryTests(unittest.TestCase):
+    def test_review_action_does_not_reset_manual_version_choice(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "config.yaml").write_text("proxybench: {}", encoding="utf-8")
+            dashboard = MultiModeDashboard(SimpleNamespace(root=root, repository="owner/repo"))
+            with patch.object(dashboard, "refresh_core") as review:
+                dashboard.action("core-check", {})
+                review.assert_called_once_with()
+            with patch.object(dashboard, "refresh_core") as choose:
+                dashboard.action("core-version", {"version": "latest"})
+                choose.assert_called_once_with("latest", automatic=False)
+
     def release(self, tag, binary):
         if os.name == "nt":
             stream = io.BytesIO()
@@ -129,4 +143,3 @@ class CoreVersionHistoryTests(unittest.TestCase):
             manager.controller.call.assert_any_call("/connections", "DELETE")
             payload = manager.controller.call.call_args.args[2]["payload"]
             self.assertIn("proxies: []", payload)
-

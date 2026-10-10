@@ -84,6 +84,9 @@ class MultiModeDashboard:
             return self._action(action, dict(payload))
 
     def _action(self, action, payload):
+        if action == "core-check":
+            self.refresh_core()
+            return {"requested": action, "message": self.core_message}
         if action == "core-version":
             self.refresh_core(str(payload.get("version", "latest")), automatic=False)
             return {"requested": action, "message": self.core_message}
