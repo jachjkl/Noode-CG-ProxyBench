@@ -83,7 +83,11 @@ class MihomoManager:
     def version_catalog(self) -> dict:
         def read(name):
             path = self.root / name
-            return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                # Automatic-update selection removes the pin while the UI polls history.
+                return {}
         current = read("version.json").get("version", "")
         previous = read("previous-version.json").get("version", "") if (self.root / "mihomo.previous").exists() else ""
         choice = read("core-choice.json")

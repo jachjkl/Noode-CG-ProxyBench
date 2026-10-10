@@ -23,6 +23,23 @@ from tests.proxybench.test_benchmark import pool
 
 
 class CoreVersionHistoryTests(unittest.TestCase):
+    def test_history_poll_survives_pin_file_disappearing_during_automatic_selection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manager = MihomoManager(root)
+            (root / "version.json").write_text('{"version":"v1.19.32"}', encoding="utf-8")
+            (root / "core-choice.json").write_text('{"version":"v1.19.32"}', encoding="utf-8")
+            original_read = Path.read_text
+            def concurrent_read(path, *args, **kwargs):
+                if path.name == "core-choice.json":
+                    raise FileNotFoundError("automatic selection removed the pin")
+                return original_read(path, *args, **kwargs)
+            with patch.object(Path, "read_text", new=concurrent_read):
+                catalog = manager.version_catalog()
+            self.assertEqual(catalog["current"], "v1.19.32")
+            self.assertFalse(catalog["pinned"])
+            self.assertEqual(catalog["versions"], ["v1.19.32"])
+
     def test_review_action_does_not_reset_manual_version_choice(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
