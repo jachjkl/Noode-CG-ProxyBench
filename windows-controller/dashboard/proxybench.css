@@ -163,13 +163,15 @@ body.dual-app{--bg:#101312;--panel:#1b211e;--line:#38433b;--foreground:#f0f4ef;-
 @media(max-width:600px){.batch-honeycomb-panel{padding:12px}.batch-visual-grid{--hex-width:calc((100cqw - 19px) / 10.5)}.core-version-dialog{padding:18px}.core-version-record{padding:12px}.core-version-record>strong{font-size:18px}.core-dialog-footer{align-items:flex-start;flex-direction:column}.core-dialog-footer .button{width:100%}}
 
 /* Full-bleed, planar honeycomb wallpaper; only actual IP cells carry states. */
-.batch-progress-layout{grid-template-columns:220px minmax(0,1fr);align-items:start;gap:18px}
+.batch-progress-panel{width:100%;max-width:1540px;box-sizing:border-box}
+.batch-progress-layout{grid-template-columns:200px minmax(0,1fr);align-items:start;gap:16px}
 .batch-overview{display:block;padding-top:2px}
-.batch-title{align-items:flex-start}.batch-title h2{line-height:1.4}
-.batch-tally{margin:12px 0 10px;text-align:left}
-.batch-overview .batch-progress-details{display:grid;gap:6px;margin:12px 0 0;font-size:11px;line-height:1.6}
-.batch-overview .batch-legend{display:grid;grid-template-columns:repeat(2,max-content);gap:8px 14px;margin-top:12px!important;font-size:11px}
-.dual-app .batch-overview .batch-hint{display:block;margin:10px 0 0;font-size:11px;line-height:1.65;color:#aebeaa}
+.batch-title{align-items:flex-start}.batch-title h2{font-size:15px;line-height:1.4}
+.batch-tally{margin:10px 0 8px;text-align:left}.batch-overview #batchVisualCount{font-size:34px}
+.batch-overview .batch-progress-details{display:grid;gap:5px;margin:10px 0 0;font-size:10px;line-height:1.6}
+.batch-overview .batch-legend{display:grid;grid-template-columns:repeat(2,max-content);gap:6px 12px;margin-top:10px!important;font-size:10px}
+.dual-app .batch-overview .batch-hint{display:block;margin:8px 0 0;font-size:10px;line-height:1.65;color:#aebeaa}
+.dual-app #batchVisualState{font-size:11px;line-height:1.6}
 .batch-honeycomb-panel{position:relative;overflow:hidden;isolation:isolate;container-type:normal;padding:0;border:1px solid #43533f;border-radius:10px;height:240px;background:#162219;min-width:0}
 .honeycomb-background{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;opacity:.38}
 #batchHoneycombPath{fill:#233326;fill-opacity:.35;stroke:#849676;stroke-width:1}
