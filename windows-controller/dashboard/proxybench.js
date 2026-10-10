@@ -101,8 +101,8 @@ function batchProgress(live){
  $("batchVisualBar").max=Math.max(1,total);$("batchVisualBar").value=done;$("batchVisualCount").textContent=`${done} / ${total}`;
  $("batchVisualNumber").textContent=total?`第 ${live.batch_current||1} 批`:"进度已归零";
  $("batchVisualState").textContent=phase==="cleaning"?"本批已测完，正在保留合格结果并清理失败详情和缓存。":phase==="reset"?"本批缓存已清理，进度归零；下一批会重新计数。":"正在按保存规则测试本批 IP。";
- $("batchVisualStats").textContent=`合格 ${passed} · 未通过 ${Math.max(0,done-passed)} · 待完成 ${Math.max(0,total-done)}`;
- $("batchVisualRequests").textContent=`请求 ${live.batch_probe_completed||0} / ${live.batch_probe_total||0}`;
+ $("batchPassed").textContent=passed;$("batchFailed").textContent=Math.max(0,done-passed);$("batchRemaining").textContent=Math.max(0,total-done);
+ $("batchRequestCount").textContent=`${live.batch_probe_completed||0}/${live.batch_probe_total||0}`;
  const grid=$("batchVisualGrid"),signature=JSON.stringify(nodes);grid.dataset.empty=phase==="reset"?"缓存已清理，等待下一批 IP。":"开始测试后，这里显示本批 IP 的实时状态。";
  if(grid.dataset.signature===signature)return;
  grid.dataset.signature=signature;
