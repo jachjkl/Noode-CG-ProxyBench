@@ -164,25 +164,35 @@ body.dual-app{--bg:#101312;--panel:#1b211e;--line:#38433b;--foreground:#f0f4ef;-
 
 /* Full-bleed, planar honeycomb wallpaper; only actual IP cells carry states. */
 .batch-progress-panel{width:100%;max-width:none;box-sizing:border-box}
-.batch-progress-layout{grid-template-columns:240px minmax(0,1fr);align-items:start;gap:16px}
+.batch-progress-layout{grid-template-columns:300px minmax(0,1fr);align-items:start;gap:16px}
 .batch-overview{display:block;padding-top:2px}
-.batch-title{align-items:flex-start}.dual-app .batch-title h2{font-size:16px;line-height:1.4}
-.batch-tally{margin:12px 0 10px;text-align:left}.batch-overview #batchVisualCount{font-size:38px}
-.batch-overview .batch-progress-details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px;margin:14px 0 0;font-size:16px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.6;color:#d5e2c8}
-#batchVisualStats{display:contents}.batch-counter{display:flex;align-items:baseline;gap:6px;min-width:0;white-space:nowrap;font-size:15px}.batch-counter strong{font-size:17px;line-height:1.5;color:#edf5e8;flex-shrink:0}
-.dual-app .batch-overview .batch-legend{display:grid;grid-template-columns:repeat(2,max-content);gap:8px 14px;margin-top:14px!important;font-size:14px}
-.batch-overview .batch-legend span::before{width:14px;height:16px;margin-right:5px;font-size:11px}
-.dual-app .batch-overview .batch-hint{display:block;margin:12px 0 0;font-size:12px;line-height:1.75;color:#aebeaa}
-.dual-app #batchVisualState{font-size:12px;line-height:1.6}
-.batch-honeycomb-panel{position:relative;overflow:hidden;isolation:isolate;container-type:normal;padding:0;border:1px solid #43533f;border-radius:10px;height:240px;background:#162219;min-width:0}
+.batch-title{align-items:flex-start}.dual-app .batch-title h2{font-size:18px;line-height:1.4}
+.batch-tally{margin:12px 0 10px;text-align:left}.batch-overview #batchVisualCount{font-size:42px}
+.batch-overview .batch-progress-details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 12px;margin:16px 0 0;font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.6;color:#d5e2c8}
+#batchVisualStats{display:contents}.batch-counter{display:flex;align-items:baseline;gap:6px;min-width:0;white-space:nowrap;font-size:18px}.batch-counter strong{font-size:22px;line-height:1.5;color:#edf5e8;flex-shrink:0}
+.dual-app .batch-overview .batch-legend{display:grid;grid-template-columns:repeat(2,max-content);gap:10px 18px;margin-top:16px!important;font-size:16px}
+.batch-overview .batch-legend span::before{width:16px;height:18px;margin-right:6px;font-size:12px}
+.dual-app .batch-overview .batch-hint{display:block;margin:14px 0 0;font-size:14px;line-height:1.75;color:#aebeaa}
+.dual-app #batchVisualState{font-size:14px;line-height:1.6}
+.batch-honeycomb-panel{position:relative;overflow:hidden;isolation:isolate;container-type:normal;padding:0;margin-inline:clamp(12px,4vw,96px);border:1px solid #43533f;border-radius:10px;height:400px;background:#162219;min-width:0}
 .honeycomb-background{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;opacity:.38}
 #batchHoneycombPath{fill:#233326;fill-opacity:.35;stroke:#849676;stroke-width:1}
 .batch-honeycomb-panel .batch-visual-grid,.batch-honeycomb-panel .batch-visual-grid:empty{position:absolute;inset:0;display:block;width:100%;height:100%;min-height:0;box-sizing:border-box;margin:0;padding:0;border:0;border-radius:0;background:none;z-index:1}
 .batch-visual-grid:empty::after{display:none}
 .batch-honeycomb-panel .batch-node{position:absolute;transform:none}
 .batch-node.waiting{--hex-line:#4c624c;--hex-fill:#243629}
-@media(max-width:1000px){.batch-progress-layout{grid-template-columns:240px minmax(0,1fr)}.batch-overview{display:block}.batch-honeycomb-panel{padding:0}.batch-tally{grid-column:auto;grid-row:auto;margin:12px 0 10px;text-align:left}.batch-overview progress{grid-column:auto;grid-row:auto}.dual-app #batchVisualState{margin-top:10px}}
-@media(max-width:700px){.batch-progress-layout{grid-template-columns:1fr}.batch-overview{display:grid;grid-template-columns:1fr auto;gap:8px 14px}.batch-title{display:grid;gap:3px}.batch-tally{grid-column:2;grid-row:1/3;margin:0;text-align:right}.batch-overview progress{grid-column:1;grid-row:2;align-self:center}.dual-app #batchVisualState{grid-column:1/-1;margin:0}.batch-overview .batch-progress-details{grid-column:1/-1;margin:0}.batch-overview .batch-legend{grid-column:1/-1;display:flex;gap:10px;margin:0!important}.dual-app .batch-overview .batch-hint{grid-column:1/-1;margin:0}.batch-honeycomb-panel{padding:0}}
+.batch-node.passed{--hex-line:#7fffaa;--hex-fill:linear-gradient(145deg,#10b850,#3cfb7b);filter:drop-shadow(0 0 6px #3cff79aa)}
+.batch-node.passed .hex-face{color:#fff;font-size:18px;font-weight:700;box-shadow:inset 0 0 15px #8effbf80}
+.batch-node.passed .hex-face::before{content:"";position:absolute;bottom:-9px;left:20%;width:2px;height:2px;border-radius:50%;background:#fff;box-shadow:12px 5px #c8ffe4,24px -4px #edfff5,36px 7px #a2ffd0;pointer-events:none;animation:hex-pass-particles 2.8s linear infinite}
+.batch-node.passed:nth-child(3n) .hex-face::before{animation-delay:-.9s}.batch-node.passed:nth-child(3n+1) .hex-face::before{animation-delay:-1.8s}
+.batch-node.failed{--hex-line:#ff7981;--hex-fill:linear-gradient(145deg,#b71b2b,#ff374d);filter:drop-shadow(0 0 6px #ff324faa)}
+.batch-node.failed .hex-face{color:#fff;font-weight:700;box-shadow:inset 0 0 14px #ff829666}
+.batch-legend .passed::before{background:#20d86a;color:#fff}.batch-legend .failed::before{background:#f63049;color:#fff}
+@keyframes hex-pass-particles{0%{transform:translate(0,0);opacity:0}15%{opacity:.95}80%{opacity:.7}100%{transform:translate(8px,calc(-1 * var(--hex-height)));opacity:0}}
+.page-hidden .batch-node.passed .hex-face::before,.batch-progress-panel.motion-offscreen .batch-node.passed .hex-face::before{animation-play-state:paused}
+@media(prefers-reduced-motion:reduce){.batch-node.passed .hex-face::before{display:none}}
+@media(max-width:1000px){.batch-progress-layout{grid-template-columns:300px minmax(0,1fr)}.batch-overview{display:block}.batch-honeycomb-panel{padding:0}.batch-tally{grid-column:auto;grid-row:auto;margin:12px 0 10px;text-align:left}.batch-overview progress{grid-column:auto;grid-row:auto}.dual-app #batchVisualState{margin-top:10px}}
+@media(max-width:700px){.batch-progress-layout{grid-template-columns:1fr}.batch-overview{display:grid;grid-template-columns:1fr auto;gap:8px 14px}.batch-title{display:grid;gap:3px}.batch-tally{grid-column:2;grid-row:1/3;margin:0;text-align:right}.batch-overview #batchVisualCount{font-size:34px}.batch-overview progress{grid-column:1;grid-row:2;align-self:center}.dual-app #batchVisualState{grid-column:1/-1;margin:0}.batch-overview .batch-progress-details{grid-column:1/-1;margin:0}.batch-counter{font-size:16px}.batch-counter strong{font-size:20px}.batch-overview .batch-legend{grid-column:1/-1;display:flex;gap:10px;margin:0!important}.dual-app .batch-overview .batch-hint{grid-column:1/-1;margin:0}.batch-honeycomb-panel{padding:0;margin-inline:0}}
 
 .overall-settings summary>span{font-size:12px;color:#b6cca3;margin-left:12px}
 .github-settings-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,.8fr);gap:24px;margin-top:16px}.github-settings-form{display:grid;gap:12px}.github-buttons{display:flex;gap:8px;flex-wrap:wrap}.github-buttons [hidden]{display:none!important}.github-connection-state{border:1px solid #526449;border-radius:10px;padding:14px;margin-top:16px;background:#19261c}.github-connection-state.Ready{border-color:#87b16a;background:#223d2a}.github-connection-state.Failed{border-color:#a17765;background:#342823}.github-connection-state strong{font-size:13px}.github-output-help{font-size:12px!important;line-height:1.8!important}.github-setup-guide{padding:18px;border:1px solid #43553c;border-radius:10px;background:#172219}.github-setup-guide ol{padding-left:22px;display:grid;gap:12px}.github-setup-guide li{font-size:13px;line-height:1.7}.github-setup-guide p{font-size:12px!important;line-height:1.8!important}.github-setup-guide a{display:inline-flex;margin:6px 6px 0 0}.github-settings-form input{box-sizing:border-box;min-height:44px;width:100%;background:#141e17;color:#edf5e8;border:1px solid #637a5c;border-radius:6px;padding:10px;font-size:14px}
