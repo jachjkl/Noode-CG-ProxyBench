@@ -262,6 +262,9 @@ class Pipeline:
         return pool, report
 
     def run(self, resume: bool = False, handoff: bool = False, publish_only: bool = False) -> dict:
+        if self.settings.get("regional_publication"):
+            from .session_lifecycle import upgrade_fast_defaults
+            upgrade_fast_defaults(self.settings)
         while True:
             try:
                 if self.settings.get("auto_refresh_profile"):

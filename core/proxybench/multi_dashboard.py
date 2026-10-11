@@ -12,7 +12,7 @@ from core.io_utils import atomic_write_json
 
 from .cloud import CloudController
 from .dashboard import BenchDashboard
-from .github_destination import check_destination, destination, load_destination, save_destination
+from .github_destination import check_destination, check_steps, destination, load_destination, save_destination
 from .mihomo_manager import MihomoManager, owned_core_running
 from .modes import MODES, publication_limits
 from .session_lifecycle import clear_shared
@@ -64,13 +64,18 @@ class MultiModeDashboard:
             raise ValueError("正在检查 GitHub 连接，请稍候")
         target = destination(payload.get("repository", self.controllers["proxy"].settings["repository"]),
                              payload.get("branch", self.controllers["proxy"].settings["branch"]))
-        self.github_status = {**target, "status": "Checking", "message": "正在检查登录、仓库写权限、分支和云端任务"}
+        self.github_status = {**target, "status": "Checking", "steps": check_steps(), "message": "正在逐项检查登录、仓库写权限、分支和云端任务"}
         ticket = self.github_status
+        def on_step(event):
+            if self.github_status is ticket:
+                ticket["steps"] = [{**row, **event} if row["id"] == event["id"] else row for row in ticket["steps"]]
+                if event.get("account"):
+                    ticket["account"] = event["account"]
         def check():
             try:
-                status = check_destination(CloudController({**self.controllers["proxy"].settings, **target}), target)
+                status = check_destination(CloudController({**self.controllers["proxy"].settings, **target}), target, on_step)
             except Exception as error:
-                status = {**target, "status": "Failed", "message": str(error) if isinstance(error, ValueError) else "GitHub 检查失败；请检查登录与网络，已测 IP 保留"}
+                status = {**ticket, "status": "Failed", "message": str(error) if isinstance(error, ValueError) else "GitHub 检查失败；请检查登录与网络，已测 IP 保留"}
             if self.github_status is ticket:
                 self.github_status = status
         self.github_thread = threading.Thread(target=check, daemon=True)
@@ -89,6 +94,9 @@ class MultiModeDashboard:
             raise ValueError("请使用包含 GitHub CLI 的完整安装包")
         self.github_login_process = subprocess.Popen([client.gh, "auth", "login", "--web", "--hostname", "github.com", "--git-protocol", "https", "--scopes", "repo,workflow"],
                                                      cwd=self.app, creationflags=subprocess.CREATE_NEW_CONSOLE)
+        self.github_status = {**load_destination(self.app, self.controllers["proxy"].settings), "status": "Authenticating", "steps": check_steps(),
+                              "message": "官方登录窗口已打开，等待浏览器授权；完成后自动检查账号和目标仓库"}
+        self.github_status["steps"][0].update(status="running", detail="请在官方登录窗口复制验证码，并在浏览器完成授权")
         return {"message": "GitHub 官方登录窗口已打开；复制一次性验证码并在浏览器授权，完成后点击检查连接"}
 
     def refresh_core(self, version="latest", *, automatic=True):
@@ -122,6 +130,15 @@ class MultiModeDashboard:
             child.refresh_cloud()
 
     def snapshot(self, mode=None):
+        if self.github_status.get("status") == "Authenticating" and self.github_login_process and self.github_login_process.poll() is not None:
+            exit_code = self.github_login_process.returncode
+            if exit_code == 0 and not (self.github_thread and self.github_thread.is_alive()):
+                self.github_login_process = None
+                self.check_github({})
+            elif exit_code != 0:
+                self.github_login_process = None
+                self.github_status.update(status="Failed", message="官方登录未完成；点击登录 GitHub 可以重试，已测 IP 保留")
+                self.github_status["steps"][0].update(status="failed", detail="浏览器授权未完成或登录窗口已取消")
         selected = mode if mode in MODES else self.mode
         value = self.controllers[selected].snapshot()
         active = self.active()

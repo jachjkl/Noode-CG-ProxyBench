@@ -10,17 +10,17 @@ BATCH_SIZE = 100
 
 RULES = {"batch_size": BATCH_SIZE, "round_count": 1, "max_proxy_average_latency_ms": 300.0,
          "max_proxy_loss_percent": 0.0, "min_proxy_speed_mbps": 3.01, "download_attempts": 1,
-         "download_bytes": 524288, "minimum_completion_ratio": 0.95, "maximum_download_seconds": 7.0,
-         "request_timeout_seconds": 3.0,
-         "download_timeout_seconds": 8.0, "delay_concurrency": 60, "speed_concurrency": 4,
+         "download_bytes": 524288, "minimum_completion_ratio": 0.95, "maximum_download_seconds": 5.0,
+         "request_timeout_seconds": 2.0,
+         "download_timeout_seconds": 5.0, "delay_concurrency": 100, "speed_concurrency": 4,
          "publish_count": 100, "jp_publish_count": 10, "adaptive_concurrency": 1}
 TCP_RULES = {"batch_size": BATCH_SIZE, "tcp_attempts": 3, "tcp_timeout_seconds": 1.0,
              "tcp_concurrency": 256, "max_tcp_average_latency_ms": 200.0,
              "max_loss_percent": 20.0, "max_jitter_ms": 200.0, "tls_enabled": 0,
-             "tls_attempts": 3, "tls_timeout_seconds": 4.0, "max_tls_average_latency_ms": 200.0,
+             "tls_attempts": 3, "tls_timeout_seconds": 2.0, "max_tls_average_latency_ms": 200.0,
              "tls_concurrency": 100, "min_download_mbps": 3.0, "download_bytes": 524288,
-             "minimum_completion_ratio": 0.95, "maximum_download_seconds": 7.0,
-             "download_timeout_seconds": 8.0, "speed_concurrency": 20,
+             "minimum_completion_ratio": 0.95, "maximum_download_seconds": 5.0,
+             "download_timeout_seconds": 5.0, "speed_concurrency": 20,
              "publish_count": 300, "jp_publish_count": 10}
 RETIRED_PROXY_RULES = {"max_entry_latency_ms", "entry_timeout_seconds", "entry_concurrency", "quick_finish", "max_proxy_jitter_ms", "round_cooldown_seconds"}
 SITES = (("google", "https://www.gstatic.com/generate_204", "204"),

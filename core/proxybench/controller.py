@@ -226,61 +226,69 @@ class Controller:
         stage = "Connect/TLS"
         received = 0
         proof = {}
+        begun = time.monotonic()
+        end = begun + timeout
         try:
-            with SocketDeadline(connection, timeout) as connect_budget:
-                connection.connect()
-                transport = connection.sock
-                connect_budget.watch(transport)
-                stage = "Routing Verification"
-                proof = self._connection_proof(name, transport.getsockname()[1], timeout=min(1.0, timeout))
-                connect_budget.check()
-            transport.settimeout(timeout)
-            path = destination.path or "/"
-            if destination.query:
-                path += "?" + destination.query
-            stage = "HTTP Headers"
-            headers = {"Host": destination.hostname,
-                               "User-Agent": "Noode-CG-ProxyBench/1.0.1", "Accept": "application/octet-stream",
-                               "Accept-Encoding": "identity", "Connection": "close"}
-            if destination.hostname != "speed.cloudflare.com":
-                headers["Range"] = f"bytes=0-{wanted_bytes - 1}"
-            with SocketDeadline(connection, timeout) as header_budget:
-                header_budget.watch(transport)
-                connection.request("GET", path, headers=headers)
-                response = connection.getresponse()
-                header_budget.check()
-            if response.status not in {200, 206}:
-                raise ValueError("Benchmark endpoint 状态异常")
-            if response.status == 206:
-                content_range = re.fullmatch(r"bytes 0-(\d+)/(\d+|\*)", response.getheader("Content-Range", ""))
-                if not content_range or int(content_range[1]) != wanted_bytes - 1:
-                    raise ValueError("测速字节范围不匹配")
-            stage = "HTTP Body"
-            started = time.perf_counter()
-            deadline = started + maximum_download_seconds
-            with SocketDeadline(connection, maximum_download_seconds) as body_budget:
-                body_budget.watch(transport)
-                while received < wanted_bytes:
-                    remaining = deadline - time.perf_counter()
-                    if remaining <= 0:
-                        raise TimeoutError
-                    transport.settimeout(min(timeout, remaining))
-                    chunk = response.read(min(65536, wanted_bytes - received))
-                    if not chunk:
-                        break
-                    received += len(chunk)
-                body_budget.check()
-            elapsed = max(time.perf_counter() - started, 0.001)
-            if elapsed > maximum_download_seconds:
-                raise TimeoutError
-            speed = _accepted_speed_mbps(received, wanted_bytes, elapsed, minimum_completion_ratio)
-            if speed is None:
-                raise ValueError("测速正文不完整")
-            return {**proof, "success": True, "http_status": response.status,
-                    "method": "legacy-proxy-speed", "destination": url, "wanted_bytes": wanted_bytes,
-                    "received_bytes": received, "completion_ratio": received / wanted_bytes,
-                    "minimum_completion_ratio": minimum_completion_ratio,
-                    "seconds": elapsed, "speed_mbps": speed}
+            with SocketDeadline(connection, timeout) as total_budget:
+                with SocketDeadline(connection, timeout) as connect_budget:
+                    connection.connect()
+                    transport = connection.sock
+                    connect_budget.watch(transport)
+                    stage = "Routing Verification"
+                    proof = self._connection_proof(name, transport.getsockname()[1], timeout=max(.001, min(1.0, end - time.monotonic())))
+                    connect_budget.check()
+                total_budget.watch(transport)
+                transport.settimeout(max(.001, end - time.monotonic()))
+                path = destination.path or "/"
+                if destination.query:
+                    path += "?" + destination.query
+                stage = "HTTP Headers"
+                headers = {"Host": destination.hostname,
+                                   "User-Agent": "Noode-CG-ProxyBench/1.0.1", "Accept": "application/octet-stream",
+                                   "Accept-Encoding": "identity", "Connection": "close"}
+                if destination.hostname != "speed.cloudflare.com":
+                    headers["Range"] = f"bytes=0-{wanted_bytes - 1}"
+                with SocketDeadline(connection, timeout) as header_budget:
+                    header_budget.watch(transport)
+                    connection.request("GET", path, headers=headers)
+                    response = connection.getresponse()
+                    header_budget.check()
+                total_budget.check()
+                if response.status not in {200, 206}:
+                    raise ValueError("Benchmark endpoint 状态异常")
+                if response.status == 206:
+                    content_range = re.fullmatch(r"bytes 0-(\d+)/(\d+|\*)", response.getheader("Content-Range", ""))
+                    if not content_range or int(content_range[1]) != wanted_bytes - 1:
+                        raise ValueError("测速字节范围不匹配")
+                stage = "HTTP Body"
+                started = time.perf_counter()
+                deadline = started + maximum_download_seconds
+                with SocketDeadline(connection, maximum_download_seconds) as body_budget:
+                    body_budget.watch(transport)
+                    while received < wanted_bytes:
+                        remaining = deadline - time.perf_counter()
+                        if remaining <= 0:
+                            raise TimeoutError
+                        transport.settimeout(max(.001, min(remaining, end - time.monotonic())))
+                        chunk = response.read(min(65536, wanted_bytes - received))
+                        if not chunk:
+                            break
+                        received += len(chunk)
+                    body_budget.check()
+                elapsed = max(time.perf_counter() - started, 0.001)
+                if elapsed > maximum_download_seconds:
+                    raise TimeoutError
+                total_budget.check()
+                if time.monotonic() > end:
+                    raise TimeoutError
+                speed = _accepted_speed_mbps(received, wanted_bytes, elapsed, minimum_completion_ratio)
+                if speed is None:
+                    raise ValueError("测速正文不完整")
+                return {**proof, "success": True, "http_status": response.status,
+                        "method": "legacy-proxy-speed", "destination": url, "wanted_bytes": wanted_bytes,
+                        "received_bytes": received, "completion_ratio": received / wanted_bytes,
+                        "minimum_completion_ratio": minimum_completion_ratio,
+                        "seconds": elapsed, "speed_mbps": speed, "total_timeout_seconds": timeout, "total_seconds": time.monotonic() - begun}
         except Exception as exc:
             raise RequestError(stage, received, type(exc).__name__, proof) from None
         finally:

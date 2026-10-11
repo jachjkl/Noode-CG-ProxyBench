@@ -16,6 +16,23 @@ def saved_path(settings: dict) -> Path:
     return settings.get("root", settings["state_dir"]) / "data/saved-measurements" / f"{settings.get('measurement_mode', 'proxy')}.json.gz"
 
 
+def upgrade_fast_defaults(settings: dict) -> dict:
+    """Upgrade only recognized former defaults; preserve customized quality and timing limits."""
+    marker = settings["root"] / "data" / f"{settings.get('measurement_mode', 'proxy')}-fast-defaults-v1.json"
+    if marker.exists():
+        return {}
+    path = settings["rules_path"]
+    saved = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    pairs = {"download_timeout_seconds": (8, 5), "maximum_download_seconds": (7, 5)}
+    pairs.update({"tls_timeout_seconds": (4, 2)} if settings.get("measurement_mode") == "tcp_tls" else
+                 {"request_timeout_seconds": (3, 2), "delay_concurrency": (60, 100)})
+    changed = {key: new for key, (old, new) in pairs.items() if saved.get(key) == old}
+    if changed:
+        atomic_write_json(path, {**saved, **changed})
+    atomic_write_json(marker, {"applied": changed})
+    return changed
+
+
 def upgrade_direct_parallelism(settings: dict) -> bool:
     marker = settings["root"] / "data/tcpbench-parallelism-v2.json"
     if settings.get("measurement_mode") != "tcp_tls" or marker.exists():

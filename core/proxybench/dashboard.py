@@ -32,6 +32,9 @@ class BenchDashboard:
         self.settings = mode_settings(load_settings(self.app / "config.yaml"), mode)
         self.direct = mode == "tcp_tls"
         self.events = EventLog(self.app, mode)
+        from .session_lifecycle import upgrade_fast_defaults
+        if upgrade_fast_defaults(self.settings):
+            self.events.append("已升级旧版默认等待设置：下载总超时 5 秒、网站或 TLS 超时 2 秒；自定义值和合格标准保持原值，可在规则中调整")
         if upgrade_direct_parallelism(self.settings):
             self.events.append("旧版默认并发已对齐原包：直连下载 20、TLS 100、TCP 超时 1 秒；延迟、丢包、抖动、速度和发布数量门槛保持原值")
         self.opened_at = time.monotonic()

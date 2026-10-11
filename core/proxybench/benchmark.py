@@ -163,7 +163,7 @@ class Benchmark:
                 if rules.get("adaptive_concurrency") and len(window) >= max(8, concurrency):
                     successful = [p["latency_ms"] for p in window if p["success"]]
                     if successful and len(successful) / len(window) < .7 and statistics.median(successful) > rules["request_timeout_seconds"] * 600:
-                        concurrency = max(1, concurrency // 2)
+                        concurrency = max(min(20, rules["delay_concurrency"]), concurrency // 2)
                     window.clear()
                 self.update(effective_concurrency=concurrency)
         return self.finish_measurements(records, completed)

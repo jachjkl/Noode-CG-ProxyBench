@@ -6,6 +6,7 @@ import copy
 import json
 import math
 import statistics
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -155,25 +156,12 @@ class DirectBenchmark:
         survivors = [r for r in tested if r["status"].endswith("Passed")]
         stage = "Direct Speed Testing"
 
-        async def download(record):
-            record["status"] = "Direct Speed Testing"
-            show(record)
-            node = NodeResult(ip=record["ip"], port=record["port"])
-            await self.control.async_checkpoint()
-            await test_speed([node], {"enabled": True, "candidates": 1, "domain": "speed.cloudflare.com",
-                                     "path": f"/__down?bytes={self.rules['download_bytes']}", "bytes_per_test": self.rules["download_bytes"],
-                                     "timeout_seconds": self.rules["download_timeout_seconds"], "maximum_download_seconds": self.rules["maximum_download_seconds"],
-                                     "minimum_completion_ratio": self.rules["minimum_completion_ratio"], "minimum_mbps": self.rules["min_download_mbps"],
-                                     "concurrency": 1}, user_agent="Noode-CG-ProxyBench/1.2.1")
-            record.update(download_mbps=node.speed_mbps or 0.0,
-                          download_measurement={**node.probe_results.get("speed", {}), "success": node.speed_mbps is not None,
-                                                "routing_proof": "direct-pinned-candidate", "destination": f"{node.ip}:{node.port}", "host": "speed.cloudflare.com"})
-            failure = direct_failure(record, self.rules)
-            if failure:
-                record["rejection_reason"] = f"下载 {record['download_mbps']:g} Mbps；最低 {self.rules['min_download_mbps']:g} Mbps；正文完整度或连接失败也会淘汰"
-            else:
-                record["status"] = "Direct Location"
-                show(record)
+        location_tasks = []
+        location_slots = asyncio.Semaphore(min(100, self.rules["tls_concurrency"]))
+
+        async def locate(record, node):
+            async with location_slots:
+                await self.control.async_checkpoint()
                 try:
                     status, headers, body, _ttfb = await asyncio.wait_for(_request(node, domain="www.cloudflare.com", path="/cdn-cgi/trace", context=self.context,
                                                                  timeout=self.rules["tls_timeout_seconds"], user_agent="Noode-CG-ProxyBench/1.2.5"), timeout=self.rules["tls_timeout_seconds"])
@@ -185,10 +173,50 @@ class DirectBenchmark:
                                   jp_qualified=country == "JP", geo_method="cloudflare-edge-colo", cf_ray=headers.get("cf-ray", ""))
                 except (TimeoutError, OSError, ValueError, EOFError):
                     record.update(geo_country="", geo_verified=False, geo_conflict=False, jp_qualified=False)
-            record.update(qualified=not failure, status=failure or "Qualified")
+            record.update(qualified=True, status="Qualified")
             finish(record)
             return record
 
-        await run_worker_pool(survivors, download, self.rules["speed_concurrency"])
+        async def download(record):
+            record["status"] = "Direct Speed Testing"
+            show(record)
+            node = NodeResult(ip=record["ip"], port=record["port"])
+            await self.control.async_checkpoint()
+            speed_started = time.monotonic()
+            try:
+                await asyncio.wait_for(test_speed([node], {"enabled": True, "candidates": 1, "domain": "speed.cloudflare.com",
+                                     "path": f"/__down?bytes={self.rules['download_bytes']}", "bytes_per_test": self.rules["download_bytes"],
+                                     "timeout_seconds": self.rules["download_timeout_seconds"], "maximum_download_seconds": self.rules["maximum_download_seconds"],
+                                     "minimum_completion_ratio": self.rules["minimum_completion_ratio"], "minimum_mbps": self.rules["min_download_mbps"],
+                                     "concurrency": 1}, user_agent="Noode-CG-ProxyBench/1.2.1"), timeout=self.rules["download_timeout_seconds"])
+                if time.monotonic() - speed_started > self.rules["download_timeout_seconds"]:
+                    raise TimeoutError
+            except TimeoutError:
+                node.speed_mbps = None
+                node.add_error("speed", f"下载总超时 {self.rules['download_timeout_seconds']:g} 秒")
+            record.update(download_mbps=node.speed_mbps or 0.0,
+                          download_measurement={**node.probe_results.get("speed", {}), "success": node.speed_mbps is not None,
+                                                "routing_proof": "direct-pinned-candidate", "destination": f"{node.ip}:{node.port}", "host": "speed.cloudflare.com", "total_seconds": time.monotonic() - speed_started,
+                                                "total_timeout_seconds": self.rules["download_timeout_seconds"]})
+            failure = direct_failure(record, self.rules)
+            if failure:
+                record["rejection_reason"] = f"下载 {record['download_mbps']:g} Mbps；最低 {self.rules['min_download_mbps']:g} Mbps；正文完整度或连接失败也会淘汰"
+            else:
+                record["status"] = "Direct Location"
+                show(record)
+                location_tasks.append(asyncio.create_task(locate(record, node)))
+                return record
+            record.update(qualified=False, status=failure)
+            finish(record)
+            return record
+
+        try:
+            await run_worker_pool(survivors, download, self.rules["speed_concurrency"])
+            await asyncio.gather(*location_tasks)
+        finally:
+            for task in location_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*location_tasks, return_exceptions=True)
         notify(_force=True, stage=stage, candidates=list(records.values()), status="Running")
         return tested

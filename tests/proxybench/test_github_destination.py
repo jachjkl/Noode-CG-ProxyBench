@@ -9,12 +9,45 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from core.proxybench.cloud import CloudController, CloudError
-from core.proxybench.github_destination import check_destination, destination, load_destination, save_destination
+from core.proxybench.github_destination import (
+    check_destination,
+    check_steps,
+    destination,
+    load_destination,
+    save_destination,
+)
 from core.proxybench.multi_dashboard import MultiModeDashboard
 from core.proxybench.settings import load_settings
 
 
 class GithubDestinationTests(unittest.TestCase):
+    def test_official_login_completion_starts_checks_and_cancellation_is_visible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.joinpath("config.yaml").write_bytes(Path("config.yaml").read_bytes())
+            ui = MultiModeDashboard(SimpleNamespace(root=root, repository="jachjkl/Noode-CG-ProxyBench"))
+            ui.github_status = {"status": "Authenticating", "steps": check_steps()}
+            ui.github_login_process = SimpleNamespace(poll=lambda: 0, returncode=0)
+            with patch.object(ui, "check_github") as check:
+                ui.snapshot()
+                check.assert_called_once_with({})
+            self.assertIsNone(ui.github_login_process)
+            ui.github_status = {"status": "Authenticating", "steps": check_steps()}
+            ui.github_login_process = SimpleNamespace(poll=lambda: 1, returncode=1)
+            ui.snapshot()
+            self.assertEqual(ui.github_status["status"], "Failed")
+            self.assertEqual(ui.github_status["steps"][0]["status"], "failed")
+    def test_live_checks_report_each_success_and_the_exact_failed_step(self):
+        events = []
+        result = check_destination(self.client(), destination("new-owner/project"), events.append)
+        self.assertEqual([row["id"] for row in events if row["status"] == "completed"], ["account", "repository", "branch", "candidates", "publication"])
+        self.assertTrue(all(row["status"] == "completed" for row in result["steps"]))
+        self.assertEqual(events[1]["account"], "new-owner")
+        events.clear()
+        with self.assertRaises(ValueError):
+            check_destination(self.client(push=False), destination("new-owner/project"), events.append)
+        self.assertEqual((events[-1]["id"], events[-1]["status"]), ("repository", "failed"))
+        self.assertEqual([row["id"] for row in events if row["status"] == "completed"], ["account"])
     def client(self, full_name="new-owner/renamed-project", *, push=True, actor="new-owner"):
         client = Mock()
         def command(args, **kwargs):

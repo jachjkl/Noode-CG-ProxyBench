@@ -66,7 +66,7 @@ class BenchmarkTests(unittest.TestCase):
         self.assertTrue(all(row["qualified"] and row["jp_qualified"] for row in results))
         self.assertTrue(all(len(row["download_rounds_mbps"]) == 1 for row in results))
         self.assertEqual(len(manager.controller.speed_calls), 100)
-        self.assertTrue(all(call[2]["wanted_bytes"] == 524288 and call[2]["maximum_download_seconds"] == 7
+        self.assertTrue(all(call[2]["wanted_bytes"] == 524288 and call[2]["maximum_download_seconds"] == RULES["maximum_download_seconds"]
                             and call[2]["minimum_completion_ratio"] == .95 for call in manager.controller.speed_calls))
         self.assertEqual(results[0]["proxy_download_average_mbytes"], 3.0)
 

@@ -12,7 +12,7 @@ const proxyFields=[
  ["adaptive_concurrency","自动降低拥塞并发",0,1,1],
  ["download_attempts","下载测速次数",1,10,1],["download_bytes","测速样本（MiB）",.5,8,.5],
  ["minimum_completion_ratio","最低正文完整度（%）",95,100,.1],["maximum_download_seconds","正文计时上限（秒）",.1,120,.1],
- ["request_timeout_seconds","网站请求超时（秒）",.1,60,.1],["download_timeout_seconds","下载 I/O 超时（秒）",.1,120,.1],
+ ["request_timeout_seconds","网站请求超时（秒）",.1,60,.1],["download_timeout_seconds","下载总超时（秒）",.1,120,.1],
  ["speed_concurrency","下载并发上限",1,8,1],
 ];
 const tcpFields=[
@@ -24,7 +24,7 @@ const tcpFields=[
  ["tcp_concurrency","TCP 测量并发上限",1,512,1],["tls_concurrency","TLS 检测并发上限",1,128,1],
  ["batch_size","每批完整实测节点数",100,100,1],["speed_concurrency","下载并发上限",1,20,1],
  ["download_bytes","测速样本（MiB）",.5,8,.5],["minimum_completion_ratio","最低正文完整度（%）",95,100,.1],
- ["maximum_download_seconds","正文计时上限（秒）",.1,120,.1],["download_timeout_seconds","下载 I/O 超时（秒）",.1,120,.1]
+ ["maximum_download_seconds","正文计时上限（秒）",.1,120,.1],["download_timeout_seconds","下载总超时（秒）",.1,120,.1]
 ];
 const helps={
  publish_count:"最终按本方式的实测排名取前多少个常规 IP，可填 100、200、300 等。发布前会与上一次本方式的名单重新竞赛。",
@@ -40,9 +40,9 @@ const helps={
  download_attempts:"每个代理重复下载测速的次数，各次都须成功，然后比较平均下载速度。",
  download_bytes:"每次下载的数据量，沿用原包的小样本方法。可选 0.5、1、2、4、8 MiB。",
  minimum_completion_ratio:"下载正文至少完成的比例，最低 95%。不足就拒绝，超时仍按失败处理。",
- maximum_download_seconds:"收到响应头后，传输正文的最长计时时间，超过就淘汰。",
+ maximum_download_seconds:"收到响应头后传输正文的最长时间，同时受下载总超时约束；任何一个时限超出就淘汰。",
  request_timeout_seconds:"每次网站访问和出口查询的最长等待时间，超时按请求失败处理。",
- download_timeout_seconds:"下载连接与响应的 I/O 等待时限，超时视为下载失败。",
+ download_timeout_seconds:"连接、响应头和正文共用的总等待时限；默认 5 秒，超过即失败，不会在每个阶段重新计时。",
  speed_concurrency:"同时下载的最大候选数量，最多 8。并发会共享本机带宽，过高可能降低单个 IP 的速度。",
  round_cooldown_seconds:"两轮网站访问之间的等待时间，设为 0 连续测试。",
  max_tcp_average_latency_ms:"每个 IP 连续建立 3 次 TCP 连接，取成功连接的算术平均；失败次数另外计入丢包率。平均值超过上限就淘汰。",
@@ -123,7 +123,9 @@ function renderCoreVersions(catalog,running){
  $("coreUpdateMessage").textContent=catalog.message||"每次打开自动检查内核更新。";
 }
 let githubFormSignature=null,githubRenameTarget=null;
-function renderGithub(value,running){if(!value)return;const signature=JSON.stringify([value.repository,value.branch]);if(githubFormSignature!==signature){$("githubRepository").value=value.repository;$("githubBranch").value=value.branch;githubFormSignature=signature;}$("githubTargetLabel").textContent=`${value.repository} / ${value.branch}`;const connection=value.connection||{};$("githubAccount").textContent=`登录账号：${connection.account||"未检查"}`;$("githubConnectionMessage").textContent=connection.message||"先保存目标，再检查登录与写权限。";$("githubConnectionLabel").textContent=({Ready:"连接正常",Failed:"连接失败",Checking:"正在检查",Unverified:"尚未检查"})[connection.status]||"尚未检查";$("githubConnectionState").className=`github-connection-state ${connection.status||"Unverified"}`;githubRenameTarget=connection.renamed?{repository:connection.repository,branch:connection.branch}:null;$("adoptGithubRename").hidden=!githubRenameTarget;for(const id of ["saveGithubSettings","loginGithub","adoptGithubRename"])$(id).disabled=running;$("checkGithub").disabled=!!value.checking;$("githubRepositoryLink").href=`https://github.com/${value.repository}`;$("githubWorkflowLink").href=`https://github.com/${value.repository}/actions`;}
+function githubCheckSteps(connection){const rows=connection.steps||["GitHub 登录","仓库与写权限","目标分支","获取 IP 工作流","发布结果工作流"].map((title,i)=>({id:String(i),title,status:"pending",detail:"点击检查连接，逐项核对"})),signature=JSON.stringify(rows);$("githubCheckCount").textContent=`已通过 ${rows.filter(row=>row.status==="completed").length} / ${rows.length} 项`;if(signatures.get("githubChecks")===signature)return;signatures.set("githubChecks",signature);$("githubCheckSteps").replaceChildren(...rows.map((row,i)=>{const li=document.createElement("li"),icon=document.createElement("span"),text=document.createElement("div"),title=document.createElement("strong"),detail=document.createElement("small"),state=document.createElement("span");li.className=`github-check-step ${row.status}`;li.dataset.step=row.id;icon.className="github-check-icon";icon.textContent=row.status==="completed"?"✓":row.status==="failed"?"!":String(i+1);title.textContent=row.title;detail.textContent=row.detail;state.className="github-check-label";state.textContent=({completed:"已通过",running:"检查中",failed:"未通过",pending:"待检查"})[row.status]||"等待授权";text.append(title,detail);li.append(icon,text,state);return li;}));}
+
+function renderGithub(value,running){if(!value)return;const signature=JSON.stringify([value.repository,value.branch]);if(githubFormSignature!==signature){$("githubRepository").value=value.repository;$("githubBranch").value=value.branch;githubFormSignature=signature;}$("githubTargetLabel").textContent=`${value.repository} / ${value.branch}`;const connection=value.connection||{};githubCheckSteps(connection);$("githubAccount").textContent=`登录账号：${connection.account||"未检查"}`;$("githubConnectionMessage").textContent=connection.message||"先保存目标，再检查登录与写权限。";$("githubConnectionLabel").textContent=({Ready:"连接正常",Failed:"连接失败",Checking:"正在逐项检查",Authenticating:"等待浏览器授权",Unverified:"尚未检查"})[connection.status]||"尚未检查";$("githubConnectionState").className=`github-connection-state ${connection.status||"Unverified"}`;githubRenameTarget=connection.renamed?{repository:connection.repository,branch:connection.branch}:null;$("adoptGithubRename").hidden=!githubRenameTarget;for(const id of ["saveGithubSettings","loginGithub","adoptGithubRename"])$(id).disabled=running;$("checkGithub").disabled=!!value.checking||connection.status==="Authenticating";$("loginGithub").disabled=running||connection.status==="Authenticating";$("githubRepositoryLink").href=`https://github.com/${value.repository}`;$("githubWorkflowLink").href=`https://github.com/${value.repository}/actions`;}
 let publicationMode=null,publicationDirty=false,publicationSignature="",publicationRevision=0,publicationSaveTimer=0,publicationSaving=false;
 const commonRegions=["JP","HK","SG","US","DE","GB","FR","NL","KR"];
 const regionNames=new Intl.DisplayNames(["zh-CN"],{type:"region",fallback:"none"});

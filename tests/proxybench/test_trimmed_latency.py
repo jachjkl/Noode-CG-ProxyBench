@@ -42,7 +42,7 @@ class OneRoundLatencyTests(unittest.TestCase):
         record = self.record([10, 20, None])
         calculate(record, RULES)
         self.assertEqual(record["proxy_loss_percent"], 100/3)
-        self.assertGreater(record["proxy_average_latency_ms"], 1000)
+        self.assertGreater(record["proxy_average_latency_ms"], RULES["request_timeout_seconds"] * 1000 / 3)
         self.assertFalse(record["latency_passed"])
 
     def test_legacy_round_counts_are_normalized_to_exactly_one(self):

@@ -41,36 +41,65 @@ def save_destination(root: Path, value: dict) -> dict:
     return saved
 
 
-def check_destination(client, target: dict) -> dict:
+CHECK_STEPS = (("account", "GitHub 登录"), ("repository", "仓库与写权限"), ("branch", "目标分支"),
+               ("candidates", "获取 IP 工作流"), ("publication", "发布结果工作流"))
+
+
+def check_steps():
+    return [{"id": key, "title": title, "status": "pending", "detail": "等待检查"} for key, title in CHECK_STEPS]
+
+
+def check_destination(client, target: dict, on_step=None) -> dict:
     target = destination(target["repository"], target["branch"])
+    steps = check_steps()
+    active = "account"
+    def emit(key, status, detail, **extra):
+        nonlocal steps, active
+        active = key
+        event = {"id": key, "status": status, "detail": detail, **extra}
+        steps = [{**row, **event} if row["id"] == key else row for row in steps]
+        if on_step:
+            on_step(event)
     try:
-        actor = client.command(["api", "user", "--jq", ".login"], timeout=8).strip()
-    except Exception:
-        raise ValueError("尚未登录 GitHub 或授权已失效；点击登录 GitHub 后重新检查") from None
-    try:
-        repository = client.command(["api", f"repos/{target['repository']}"], timeout=8, as_json=True)
-    except Exception:
-        raise ValueError("无法读取目标仓库：请检查账号/仓库名，以及该账号的访问权限") from None
-    canonical = destination(repository.get("full_name", ""), target["branch"])
-    if repository.get("archived") or repository.get("disabled"):
-        raise ValueError("目标仓库已归档或已停用，不能推送")
-    if not repository.get("permissions", {}).get("push"):
-        raise ValueError("当前 GitHub 账号没有此仓库的写入权限，已测 IP 不会丢失")
-    owner = canonical["repository"].split("/")[0]
-    if actor.casefold() != owner.casefold():
-        raise ValueError(f"当前登录 {actor}，云端任务仅允许仓库所有者 {owner} 运行；请切换账号")
-    try:
-        client.command(["api", f"repos/{canonical['repository']}/branches/{quote(target['branch'], safe='')}"], timeout=8, as_json=True)
-    except Exception:
-        raise ValueError("目标分支不存在，请在整体设置中修改分支") from None
-    for workflow in ("proxybench.yml", "proxybench-publish.yml"):
+        emit("account", "running", "正在核对 GitHub 官方登录授权")
         try:
-            state = client.command(["api", f"repos/{canonical['repository']}/actions/workflows/{workflow}"], timeout=8, as_json=True)
-            if state.get("state") != "active":
-                raise ValueError
-            client.command(["api", f"repos/{canonical['repository']}/contents/.github/workflows/{workflow}?ref={quote(target['branch'], safe='')}"], timeout=8, as_json=True)
+            actor = client.command(["api", "user", "--jq", ".login"], timeout=8).strip()
         except Exception:
-            raise ValueError(f"云端自动化尚未就绪：请按引导上传完整源码并启用 {workflow}") from None
-    renamed = canonical["repository"].casefold() != target["repository"].casefold()
-    return {**canonical, "status": "Ready", "account": actor, "requested_repository": target["repository"],
-            "renamed": renamed, "message": (f"仓库已更名为 {canonical['repository']}；请保存检测到的地址" if renamed else "登录、仓库写权限、分支及两项云端任务检查通过")}
+            raise ValueError("尚未登录 GitHub 或授权已失效；点击登录 GitHub 后重新检查") from None
+        emit("account", "completed", f"已登录：{actor}", account=actor)
+        emit("repository", "running", "正在读取目标仓库并核对所有者与写权限")
+        try:
+            repository = client.command(["api", f"repos/{target['repository']}"], timeout=8, as_json=True)
+        except Exception:
+            raise ValueError("无法读取目标仓库：请检查账号/仓库名，以及该账号的访问权限") from None
+        canonical = destination(repository.get("full_name", ""), target["branch"])
+        if repository.get("archived") or repository.get("disabled"):
+            raise ValueError("目标仓库已归档或已停用，不能推送")
+        if not repository.get("permissions", {}).get("push"):
+            raise ValueError("当前 GitHub 账号没有此仓库的写入权限，已测 IP 不会丢失")
+        owner = canonical["repository"].split("/")[0]
+        if actor.casefold() != owner.casefold():
+            raise ValueError(f"当前登录 {actor}，云端任务仅允许仓库所有者 {owner} 运行；请切换账号")
+        emit("repository", "completed", f"{canonical['repository']} · 所有者与写权限通过")
+        emit("branch", "running", f"正在检查 {target['branch']} 分支")
+        try:
+            client.command(["api", f"repos/{canonical['repository']}/branches/{quote(target['branch'], safe='')}"], timeout=8, as_json=True)
+        except Exception:
+            raise ValueError("目标分支不存在，请在整体设置中修改分支") from None
+        emit("branch", "completed", f"{target['branch']} 分支可用")
+        for key, workflow in (("candidates", "proxybench.yml"), ("publication", "proxybench-publish.yml")):
+            emit(key, "running", "正在核对自动任务及目标分支中的源码")
+            try:
+                state = client.command(["api", f"repos/{canonical['repository']}/actions/workflows/{workflow}"], timeout=8, as_json=True)
+                if state.get("state") != "active":
+                    raise ValueError
+                client.command(["api", f"repos/{canonical['repository']}/contents/.github/workflows/{workflow}?ref={quote(target['branch'], safe='')}"], timeout=8, as_json=True)
+            except Exception:
+                raise ValueError(f"云端自动化尚未就绪：请按引导上传完整源码并启用 {workflow}") from None
+            emit(key, "completed", "工作流已启用，目标分支源码完整")
+        renamed = canonical["repository"].casefold() != target["repository"].casefold()
+        return {**canonical, "status": "Ready", "account": actor, "steps": steps, "requested_repository": target["repository"],
+                "renamed": renamed, "message": (f"仓库已更名为 {canonical['repository']}；请保存检测到的地址" if renamed else "登录、仓库写权限、分支及两项云端任务检查通过")}
+    except ValueError as error:
+        emit(active, "failed", str(error))
+        raise
