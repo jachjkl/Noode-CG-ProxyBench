@@ -239,13 +239,13 @@ class DualMethodTests(unittest.TestCase):
                 pipeline = Pipeline(settings, pool_builder=builder)
                 result = pipeline.run()
             self.assertTrue(result["published"])
-            self.assertEqual((result["general_final_count"], result["jp_final_count"]), (200, 7))
+            self.assertEqual((result["general_final_count"], result["jp_final_count"]), (193, 7))
             tcp.assert_not_awaited()
-            self.assertEqual(tls.await_count, 3 * (210 + 207))
+            self.assertEqual(tls.await_count, 3 * (210 + 200))
             builder.assert_called_once()
             rows = json.loads((root / "output/Nodes-TCP/nodes.json").read_text(encoding="utf-8"))
             self.assertTrue(all(r["tcp_rounds_ms"] == [] and len(r["tls_rounds_ms"]) == 3 and r["latency_probe"] == "tls" for r in rows))
-            self.assertEqual([r["rank"] for r in rows], list(range(1, 208)))
+            self.assertEqual([r["rank"] for r in rows], list(range(1, 201)))
             self.assertFalse((root / "output/nodes.txt").exists())
 
     def test_single_proxy_round_does_not_invent_temporal_jitter(self):

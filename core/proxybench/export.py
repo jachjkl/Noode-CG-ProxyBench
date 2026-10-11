@@ -27,6 +27,7 @@ PUBLIC_FIELDS = {"ip", "port", "rank", "lane", "jp_hint", "geo_country", "geo_ve
 PUBLIC_FIELDS.update({"measurement_mode", "latency_probe", "latency_domain", "rejection_reason", "tcp_rounds_ms", "tcp_average_latency_ms", "tcp_loss_percent", "tcp_jitter_ms", "tcp_success_count",
                       "tls_rounds_ms", "tls_average_latency_ms", "tls_jitter_ms", "tls_loss_percent", "tls_enabled", "tls_passed",
                       "download_mbps", "download_measurement", "colo", "city", "geo_method", "latency_targets", "probe_method"})
+PUBLIC_FIELDS.add("publication_role")
 ARTIFACTS = ("nodes.txt", "nodes.json", "nodes.csv", "api.json", "ip.zip")
 TRANSACTION_FILES = (*ARTIFACTS, "health.json")
 DIRECT_SUBSCRIPTION = "output/Npdex-Tcp/Tls.txt"
@@ -68,6 +69,9 @@ def nodes_text(records: list[dict]) -> str:
 
 def gate(records: list[dict], *, allow_partial: bool = False, limits: dict | None = None) -> bool:
     limits = validate_limits(limits)
+    if limits.get("kind") == "regional-v1":
+        from .publication_policy import gate as regional_gate
+        return regional_gate(records, limits, allow_partial=allow_partial)
     general = sum(item.get("lane") == "general" for item in records)
     japan = sum(item.get("lane") == "jp_append" for item in records)
     counts = (0 < len(records) <= sum(limits.values()) and general <= limits["general"] and japan <= limits["japan"]

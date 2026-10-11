@@ -160,8 +160,8 @@ class BenchDashboard:
                 measured[key] = {**row, "qualified": False, "status": failure}
         if kind == "competition-results":
             state = self.checkpoint_snapshot()
-            rows = [*state.get("general_results", {}).values(), *state.get("jp_results", {}).values()]
-            if live.get("phase") in {"general_retest", "jp_retest"}:
+            rows = [*state.get("general_results", {}).values(), *state.get("jp_results", {}).values(), *state.get("regional_results", {}).values()]
+            if live.get("phase") in {"general_retest", "jp_retest", "regional_retest"}:
                 staged = {f"{row['ip']}:{row['port']}": row for row in rows}
                 staged.update({f"{row['ip']}:{row['port']}": row for row in active_rows})
                 rows = list(staged.values())
@@ -259,7 +259,13 @@ class BenchDashboard:
             timing = {**self.clock.snapshot(running, control.get("action") == "pause"),
                       "software_seconds": max(0.0, time.monotonic() - self.opened_at)}
         live = {key: value for key, value in live.items() if key != "candidates"}
+        from .publication_policy import current, editable, preview
+        publication_rows = [r for r in cached_results.values() if r.get("qualified") and not limit_failure(r, saved_rules)]
+        if not publication_rows and not cached_results:
+            publication_rows = [r for r in read_saved(settings) if r.get("qualified") and not limit_failure(r, saved_rules)]
+        policy = current(settings)
         return {"live": live, "profile": profile, "rules": current_rules(settings), "published": health,
+                "publication": {"policy": policy, "editable": editable(settings), "preview": preview(publication_rows, policy)},
                 "timing": timing,
                 "running": running,
                 "local_running": local_running,
@@ -290,9 +296,20 @@ class BenchDashboard:
                 rules = validate_rules({**current_rules(settings), **payload}, settings.get("measurement_mode", "proxy"))
                 if self.direct and running and rules["tls_enabled"] != current_rules(settings)["tls_enabled"]:
                     raise ValueError("请先停止并保存，再切换 TCPing 或 TLS")
-                atomic_write_json(settings["rules_path"], rules)
-                self.events.append(f"规则已保存：常规发布前 {rules['publish_count']} 个，日本追加 {rules['jp_publish_count']} 个")
+                from .publication_policy import lock
+                try:
+                    with lock(settings):
+                        atomic_write_json(settings["rules_path"], rules)
+                except ValueError:
+                    raise ValueError("正在上传，规则暂时锁定；完成或失败后可修改") from None
+                self.events.append("测速规则已保存；发布前按最新测速规则复测，地区数量由独立发布设置决定")
                 return {"saved": True, "rules": rules, "effective": "已保存到本机，下一批生效；再次打开也使用这些规则" if running else "已保存到本机，立即生效；再次打开也使用这些规则"}
+            if action == "publication-settings":
+                from .publication_policy import save
+                policy = save(settings, payload)
+                caps = "、".join(f"{code} 最多 {cap} 个" for code, cap in policy["regions"].items()) or "未限定地区上限"
+                self.events.append(f"发布设置已保存：最终总数 {policy['total']} 个；{caps}；最多自动获取 {policy['max_rounds']} 轮")
+                return {"saved": True, "policy": policy, "message": "已保存；上传前按此设置重新取最优名单，所有地区都计入最终总数"}
             if action in {"pause", "stop", "resume-paused"}:
                 if action == "stop" and not self.closing:
                     self.explicit_stop = True

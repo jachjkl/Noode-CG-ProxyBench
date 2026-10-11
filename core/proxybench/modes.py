@@ -28,6 +28,11 @@ def publication_limits(rules: dict | None = None) -> dict:
 
 def validate_limits(value: dict | None = None) -> dict:
     value = value or {"general": 100, "japan": 10}
+    if not isinstance(value, dict):
+        raise ValueError("发布名额格式错误")
+    if value.get("kind") == "regional-v1":
+        from .publication_policy import validate
+        return validate(value)
     if set(value) != {"general", "japan"}:
         raise ValueError("发布名额格式错误")
     if any(isinstance(n, bool) or not isinstance(n, int) for n in value.values()):

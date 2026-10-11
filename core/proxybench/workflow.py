@@ -32,12 +32,12 @@ def progress(live: dict, cloud: dict, health: dict) -> list[dict]:
     if cloud.get("mode") == "validate":
         rows[0]["detail"] = "独立检查代理内核，未启动优选"
         return rows
-    if cloud.get("handoff_ready") or prepare.get("conclusion") == "success" or current and phase in {"scan", "general_retest", "jp_retest", "publish", "completed", "needs_more"}:
+    if cloud.get("handoff_ready") or prepare.get("conclusion") == "success" or current and phase in {"scan", "general_retest", "jp_retest", "regional_retest", "publish", "completed", "needs_more"}:
         mark(0, "completed", "候选已在云端生成")
     elif prepare.get("status") == "in_progress" or cloud.get("status") in {"Preparing", "Dispatching", "queued", "in_progress"}:
         mark(0, "running", "正在准备或获取候选")
         active = 0
-    if cloud.get("download_ready") or download.get("conclusion") == "success" or current and phase in {"scan", "general_retest", "jp_retest", "publish", "completed", "needs_more"}:
+    if cloud.get("download_ready") or download.get("conclusion") == "success" or current and phase in {"scan", "general_retest", "jp_retest", "regional_retest", "publish", "completed", "needs_more"}:
         mark(1, "completed", "候选已下载并保存到本机")
     elif local.get("status") == "in_progress" and rows[0]["status"] == "completed":
         mark(1, "running", "正在下载并校验候选")
@@ -48,13 +48,13 @@ def progress(live: dict, cloud: dict, health: dict) -> list[dict]:
     if current and phase == "scan":
         mark(2, "running", f"已处理 {live.get('tested_count', 0)} / {live.get('candidate_total', 0)} 个 IP")
         active = 2
-    elif current and phase in {"general_retest", "jp_retest", "publish", "completed", "needs_more"}:
+    elif current and phase in {"general_retest", "jp_retest", "regional_retest", "publish", "completed", "needs_more"}:
         mark(2, "completed", "本轮优选已完成")
     elif rows[1]["status"] == "completed" and local.get("status") == "in_progress":
         mark(2, "running", "准备规则代理与本地优选")
         active = 2
-    if current and phase in {"general_retest", "jp_retest"}:
-        mark(3, "running", "复测普通新旧 IP" if phase == "general_retest" else "复测日本追加 IP")
+    if current and phase in {"general_retest", "jp_retest", "regional_retest"}:
+        mark(3, "running", "按地区上限复测新旧 IP" if phase == "regional_retest" else "复测普通新旧 IP" if phase == "general_retest" else "复测日本追加 IP")
         active = 3
     elif current and phase in {"publish", "completed", "needs_more"}:
         mark(3, "completed", "本轮新旧 IP 复测已完成")
@@ -63,7 +63,7 @@ def progress(live: dict, cloud: dict, health: dict) -> list[dict]:
     elif cloud.get("status") == "Completed" and health.get("published") or publish.get("conclusion") == "success" and health.get("published"):
         for index in range(5):
             mark(index, "completed", "已完成")
-        rows[4]["detail"] = "最优 100＋日本 10 已推送"
+        rows[4]["detail"] = f"按地区上限推送 {health.get('unique_final_count', 0)} 个 IP"
     elif publish.get("status") == "in_progress" and health.get("published"):
         mark(4, "running", "正在校验并推送 GitHub")
         active = 4
@@ -77,7 +77,7 @@ def progress(live: dict, cloud: dict, health: dict) -> list[dict]:
     elif publish.get("conclusion") in {"failure", "cancelled", "timed_out"}:
         active = 4
     elif local.get("conclusion") in {"failure", "cancelled", "timed_out"} and active is None:
-        active = 3 if current and phase in {"general_retest", "jp_retest"} else 2
+        active = 3 if current and phase in {"general_retest", "jp_retest", "regional_retest"} else 2
     failed = (cloud.get("status") == "Failed" and not local_active) or any(row.get("conclusion") in {"failure", "timed_out"} for row in (prepare, local, publish))
     state = live.get("status") if current else cloud.get("status")
     if active is None and (failed or state == "Failed"):

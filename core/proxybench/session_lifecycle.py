@@ -39,13 +39,13 @@ def save_measured(settings: dict) -> None:
     try:
         store = Store(settings["state_dir"])
         state = store.load()
-        rows = {**state.get("results", {}), **state.get("general_results", {}), **state.get("jp_results", {}), **store.partial}
+        rows = {**state.get("results", {}), **state.get("general_results", {}), **state.get("jp_results", {}), **state.get("regional_results", {}), **store.partial}
         rules = current_rules(settings)
         qualified = [row for row in rows.values() if row.get("qualified") and row.get("ip") and not limit_failure(row, rules)]
     except (OSError, ValueError, KeyError):
         return
     outcomes = {}
-    for field in ("results", "general_results", "jp_results"):
+    for field in ("results", "general_results", "jp_results", "regional_results"):
         outcomes.update(state.get("processed", {}).get(field, {}))
     if rows or outcomes:
         previous = {f"{r['ip']}:{r['port']}": r for r in read_saved(settings)}

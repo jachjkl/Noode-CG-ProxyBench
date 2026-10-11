@@ -106,9 +106,11 @@ class RunLock:
         self.handle = (root / "run.lock").open("a+b")
 
     def __enter__(self):
-        self.handle.seek(0)
-        self.handle.write(b"0")
-        self.handle.flush()
+        # Do not write an existing Windows byte range before acquiring its lock.
+        self.handle.seek(0, os.SEEK_END)
+        if self.handle.tell() == 0:
+            self.handle.write(b"0")
+            self.handle.flush()
         self.handle.seek(0)
         try:
             if os.name == "nt":

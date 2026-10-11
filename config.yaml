@@ -1,8 +1,8 @@
 proxybench:
   profile_path: config/proxy-profile.local.yaml
   official_sample_count: 10000
-  # 0 continues until General100 + JP10 pass, stopped, or official ranges are exhausted.
-  max_cycles: 0
+  # Regional publication uses the live saved max_rounds (default 3, including initial discovery).
+  max_cycles: 3
   auto_update: true
   sources:
     jp_supplemental:

@@ -19,7 +19,11 @@ from .cloud_network import vpn_environment
 from .events import EventLog, chinese
 from .pipeline import Pipeline
 from .profile import ProxyProfile, discover_profiles, import_discovered, refresh_existing, safe_error
+from .publication_policy import PolicyChanged
+from .publication_policy import current as publication_policy
+from .publication_policy import lock as publication_lock
 from .queue import accumulate
+from .settings import current_rules
 from .state import Stopped, Store
 
 
@@ -120,7 +124,9 @@ class DesktopCloudController(CloudController):
             self.update(status="Needs More", stage="现有结果复测后没有合格 IP，已保存断点；可继续测试")
             self.control.path.with_name("publish-request.json").unlink(missing_ok=True)
             return result
-        run = self.publish_pending()
+        result, run = self.publish_current(result)
+        if not run:
+            return result
         self.control.path.with_name("publish-request.json").unlink(missing_ok=True)
         self.update(status="Completed", stage=f"已手动推送常规 {result['general_final_count']} 个＋日本 {result['jp_final_count']} 个 IP")
         return {**result, "status": "success", "run_url": run["url"], "cloud_confirmed": True}
@@ -150,6 +156,36 @@ class DesktopCloudController(CloudController):
         return result["sha"], expected
 
     def publish_pending(self) -> dict:
+        if self.settings.get("regional_publication"):
+            with publication_lock(self.settings):
+                policy = publication_policy(self.settings)
+                health = json.loads((self.settings["output_dir"] / "health.json").read_text(encoding="utf-8"))
+                if not health.get("published") or health.get("publication_limits") != policy:
+                    raise PolicyChanged("发布设置已更新，上传前重新取最优名单")
+                if health.get("measurement_rules", current_rules(self.settings)) != current_rules(self.settings):
+                    raise PolicyChanged("测速规则已更新，上传前重新复测")
+                if (self.pending_dir / "manifest.json").exists():
+                    with zipfile.ZipFile(self.pending_dir / "result.zip") as package:
+                        files = {name: package.read(name) for name in package.namelist()}
+                        old = json.loads(files[f"{result_prefix(files)}/health.json"])
+                    if old.get("run_id") != health.get("run_id") or old != health:
+                        atomic_write_bytes(self.pending_dir / "previous-result.zip", (self.pending_dir / "result.zip").read_bytes())
+                        (self.pending_dir / "manifest.json").unlink()
+                        (self.pending_dir / "result.zip").unlink()
+                return self._publish_pending()
+        return self._publish_pending()
+
+    def publish_current(self, result):
+        while result.get("published"):
+            try:
+                return result, self.publish_pending()
+            except PolicyChanged:
+                self.update(status="Local", stage="发布设置已更新，上传前重新复测与排序")
+                self.settings["resume_checkpoint_only"] = True
+                result = self.local_select(publish_only=bool(result.get("manual_publication")))
+        return result, None
+
+    def _publish_pending(self) -> dict:
         self.update(status="Publishing", stage="上传已复测结果，等待云端校验与推送确认")
         blob, expected = self.upload_pending()
         self.dispatch_named("proxybench-publish.yml", {"blob_sha": blob, "payload_sha256": expected})
@@ -200,14 +236,18 @@ class DesktopCloudController(CloudController):
                 with zipfile.ZipFile(self.pending_dir / "result.zip") as package:
                     files = {name: package.read(name) for name in package.namelist()}
                     health = json.loads(files[f"{result_prefix(files)}/health.json"])
-                run = self.publish_pending()
-                if mode in {"resume", "publish"} and health.get("published"):
+                stale = self.settings.get("regional_publication") and health.get("publication_limits") != publication_policy(self.settings)
+                try:
+                    run = None if stale else self.publish_pending()
+                except PolicyChanged:
+                    run = None
+                if run and mode in {"resume", "publish"} and health.get("published"):
                     self.control.path.with_name("publish-request.json").unlink(missing_ok=True)
                     self.update(status="Completed", stage="已恢复推送并确认发布")
                     return {"status": "success", "published": True, "run_url": run["url"]}
             if mode == "publish":
                 return self.finish_manual(self.local_select(publish_only=True))
-            resumable = mode == "resume" and state.get("phase") in {"scan", "general_retest", "jp_retest", "publish"}
+            resumable = mode == "resume" and state.get("phase") in {"scan", "general_retest", "jp_retest", "regional_retest", "publish", "completed", "needs_more"}
             shared_handoff = self.root / "data/handoff/proxybench-pool.json.gz"
             if mode == "auto" and not state and shared_handoff.exists():
                 import gzip
@@ -225,7 +265,19 @@ class DesktopCloudController(CloudController):
             if resumable and limit:
                 limit = max(1, limit - int(state.get("cycle", 1)) + 1)
             rounds = 0
-            while not limit or rounds < limit:
+            cycle = int(state.get("cycle", 0))
+            extra = cycle + 1 if mode == "continue" else 0
+            last_policy = state.get("publication_limits")
+            while True:
+                if self.settings.get("regional_publication"):
+                    policy = publication_policy(self.settings)
+                    if last_policy is not None and policy != last_policy:
+                        resumable = True
+                    allowed = max(policy["max_rounds"], extra)
+                    if not resumable and cycle >= allowed:
+                        break
+                elif limit and rounds >= limit:
+                    break
                 rounds += 1
                 self.settings["resume_checkpoint_only"] = bool(resumable and state)
                 if self.control.publication_requested():
@@ -233,7 +285,10 @@ class DesktopCloudController(CloudController):
                 # Saved handoff and local checkpoints require no live GitHub connection to resume.
                 if not resumable:
                     self.fetch_handoff(session["session_id"], reuse=False)
+                    cycle += 1
                 result = self.local_select()
+                cycle = max(cycle, int(result.get("cycle", cycle)))
+                last_policy = result.get("publication_limits")
                 resumable = False
                 if result.get("status") == "stopped":
                     self.update(status="Stopped", stage="本地测速已停止并保存")
@@ -241,14 +296,18 @@ class DesktopCloudController(CloudController):
                 if result.get("manual_publication"):
                     return self.finish_manual(result)
                 if result.get("published"):
-                    run = self.publish_pending()
-                    self.update(status="Completed", stage=f"常规 {result.get('general_final_count', 0)} 个和日本 {result.get('jp_final_count', 0)} 个已复测并推送 GitHub")
-                    return {"status": "success", "published": True, "run_url": run["url"]}
+                    result, run = self.publish_current(result)
+                    if run:
+                        self.update(status="Completed", stage=f"已按各地区上限复测并推送 {result.get('unique_final_count', 0)} 个 IP")
+                        return {"status": "success", "published": True, "run_url": run["url"]}
                 if not result.get("needs_more"):
                     return result
                 # Synchronize tested IP history to the cloud without replacing last-good nodes.
-                self.publish_pending()
-            self.update(status="Needs More", stage="已达到自定义补测上限，可继续获取不同 IP")
+                if not self.settings.get("regional_publication"):
+                    self.publish_pending()
+                else:
+                    self.update(status="Needs More", stage=f"按地区上限可发布 {result.get('unique_final_count', 0)}/{publication_policy(self.settings)['total']} 个，准备补充不同 IP")
+            self.update(status="Needs More", stage="已达到自动获取轮数上限，合格结果已保存；可修改地区上限、继续获取不同 IP，或手动推送")
             return {"status": "needs_more", "published": False}
         except Stopped:
             if self.run_id:

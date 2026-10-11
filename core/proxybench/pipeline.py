@@ -294,7 +294,7 @@ class Pipeline:
                     raise ValueError("Profile 已更改，不能混用旧测量；请开始新一轮")
                 atomic_write_bytes(self.settings["state_dir"] / f"previous-profile-{secrets.token_hex(4)}-results.json.gz",
                                    gzip.compress(json.dumps(state.get("results", {})).encode(), mtime=0))
-                state.update(results={}, general_results={}, jp_results={}, processed={}, phase="scan", profile_fingerprint=profile.fingerprint)
+                state.update(results={}, general_results={}, jp_results={}, regional_results={}, processed={}, phase="scan", profile_fingerprint=profile.fingerprint)
                 state.pop("entry_results", None)
                 for item in [*state.get("pool", []), *state.get("previous_general", []), *state.get("previous_jp", [])]:
                     if "authorized_proxy_candidate" not in item.get("source_types", []):
@@ -302,12 +302,12 @@ class Pipeline:
                 self.store.partial = {}
             if state and state.get("measurement_policy") != self.policy:
                 if publish_only:
-                    measured = {**state.get("results", {}), **state.get("general_results", {}), **state.get("jp_results", {}), **self.store.partial}
+                    measured = {**state.get("results", {}), **state.get("general_results", {}), **state.get("jp_results", {}), **state.get("regional_results", {}), **self.store.partial}
                     state["manual_retest_seeds"] = [copy.deepcopy(row) for row in measured.values() if row.get("qualified")]
                 if state.get("results"):
                     atomic_write_bytes(self.settings["state_dir"] / f"previous-policy-{secrets.token_hex(4)}-results.json.gz",
                                        gzip.compress(json.dumps(state["results"]).encode(), mtime=0))
-                state.update(results={}, general_results={}, jp_results={}, processed={}, phase="scan", measurement_policy=self.policy)
+                state.update(results={}, general_results={}, jp_results={}, regional_results={}, processed={}, phase="scan", measurement_policy=self.policy)
                 state.pop("entry_results", None)
                 self.events.append("旧测速策略的结果已归档；候选和会话保留，按新方法重新测量")
                 self.store.partial = {}
@@ -326,19 +326,25 @@ class Pipeline:
                              "sources": {}, "profile_fingerprint": profile.fingerprint, "measurement_policy": self.policy}
                     self.store.state = state
                 elif self.store.partial:
-                    field = {"scan": "results", "general_retest": "general_results", "jp_retest": "jp_results"}.get(state.get("phase"))
+                    field = {"scan": "results", "general_retest": "general_results", "jp_retest": "jp_results", "regional_retest": "regional_results"}.get(state.get("phase"))
                     if field:
                         state.setdefault(field, {}).update(self.store.partial)
                         if field != "results":
                             self.refresh_retests(field)
                 state.update(phase="general_retest", competition_rules=current_rules(self.settings), general_results={}, jp_results={})
+                if self.settings.get("regional_publication"):
+                    state.update(phase="regional_retest", regional_results={})
                 self.reset_retest_progress()
                 seeds = state.pop("manual_retest_seeds", [])
                 from .session_lifecycle import read_saved
                 seeds.extend(read_saved(self.settings))
                 saved_path = self.settings["output_dir"] / "nodes.json"
                 seeds.extend(json.loads(saved_path.read_text(encoding="utf-8")) if saved_path.exists() else [])
-                if seeds:
+                if seeds and self.settings.get("regional_publication"):
+                    for row in seeds:
+                        if row.get("qualified"):
+                            state.setdefault("results", {}).setdefault(f"{row['ip']}:{row['port']}", row)
+                elif seeds:
                     seeds = self.unique_ips(sorted((row for row in seeds if row.get("qualified")), key=ranking_key))
                     limits = publication_limits(state["competition_rules"])
                     japanese = [row for row in seeds if row.get("geo_country") == "JP" and row.get("geo_verified")][:limits["japan"]]
@@ -369,9 +375,9 @@ class Pipeline:
                                  previous_jp=self.incumbent_candidates(profile, "jp_append"))
                     self.store.state = state
                     self.store.commit()
-                elif state["phase"] == "completed" and not fresh_handoff:
+                elif state["phase"] == "completed" and not fresh_handoff and not self.settings.get("regional_publication"):
                     return json.loads((self.settings["output_dir"] / "health.json").read_text(encoding="utf-8"))
-                elif fresh_handoff or state["phase"] == "needs_more":
+                elif fresh_handoff or state["phase"] == "needs_more" and not self.settings.get("resume_checkpoint_only"):
                     fresh, source_report = self.new_pool(profile, handoff)
                     previous = {item["ip"] for item in state["pool"]}
                     state["pool"].extend(item for item in fresh if item["ip"] not in previous)
@@ -382,6 +388,9 @@ class Pipeline:
                         state.update(previous_general=self.incumbent_candidates(profile, "general"),
                                      previous_jp=self.incumbent_candidates(profile, "jp_append"))
                     self.store.commit()
+                if self.settings.get("regional_publication"):
+                    from .regional_pipeline import run
+                    return run(self, profile, handoff, publish_only)
                 while True:
                     profiles = self.profiles(state["pool"], profile)
                     if state["phase"] == "scan":
@@ -485,6 +494,7 @@ class Pipeline:
         processed = self.store.state.setdefault("processed", {})
         processed.pop("general_results", None)
         processed.pop("jp_results", None)
+        processed.pop("regional_results", None)
 
     def incumbent_candidates(self, profile: ProxyProfile, lane: str) -> list[dict]:
         limits = publication_limits(current_rules(self.settings))
@@ -497,7 +507,7 @@ class Pipeline:
                                "source_names": item.get("sources", ["last-good"]),
                                "source_types": ["previous_published_candidate"], "source_priority": 0,
                                "jp_hint": lane == "jp_append"})
-        return self.unique_ips(candidates)[:limit]
+        return self.unique_ips(candidates) if self.settings.get("regional_publication") else self.unique_ips(candidates)[:limit]
 
     @staticmethod
     def candidate(result: dict) -> dict:

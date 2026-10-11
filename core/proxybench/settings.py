@@ -101,7 +101,7 @@ def load_settings(config_path: str | Path) -> dict:
     result = {"root": root, "profile": root / block.get("profile_path", "config/proxy-profile.local.yaml"),
               "state_dir": root / "data/proxy-bench", "runtime_dir": root / "runtime/mihomo",
               "output_dir": root / "output", "rules_path": root / "data/proxybench-rules.json",
-              "measurement_mode": "proxy", "direct_tls_domain": config.get("project", {}).get("target_domain", "www.cloudflare.com"),
+              "measurement_mode": "proxy", "regional_publication": True, "direct_tls_domain": config.get("project", {}).get("target_domain", "www.cloudflare.com"),
               "official_sample_count": int(block.get("official_sample_count", 10000)),
               "max_cycles": int(block.get("max_cycles", 0)), "sources": block.get("sources", {}),
               "auto_update": bool(block.get("auto_update", True)),

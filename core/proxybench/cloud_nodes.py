@@ -50,7 +50,7 @@ def read_published(client) -> dict:
         raise CloudError("云端结果格式错误")
     if any(row.get("measurement_mode", "proxy") != client.settings.get("measurement_mode", "proxy") for row in nodes):
         raise CloudError("云端测速方式与当前选择不一致")
-    partial = not gate(nodes)
+    partial = not gate(nodes) or any(row.get("publication_role") for row in nodes)
     if partial:
         health_meta = client.command(["api", f"repos/{repository}/contents/{prefix}/health.json?ref={ref}"], as_json=True)
         health = json.loads(base64.b64decode("".join(health_meta["content"].split()), validate=True))
