@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import os
 import secrets
 import subprocess
 import threading
@@ -11,6 +10,7 @@ from types import SimpleNamespace
 from core.io_utils import atomic_write_json
 
 from .cloud import CloudController
+from .cloud_network import network_settings, save_network
 from .dashboard import BenchDashboard
 from .github_destination import check_destination, check_steps, destination, load_destination, save_destination
 from .mihomo_manager import MihomoManager, owned_core_running
@@ -26,6 +26,11 @@ class MultiModeDashboard:
         session = secrets.token_hex(16)
         self.controllers = {mode: BenchDashboard(SimpleNamespace(root=legacy.root, repository=legacy.repository), mode=mode, session_id=session) for mode in MODES}
         self.app = self.controllers["proxy"].app
+        recovery = next((child for child in self.controllers.values() if child.recovery_pending), None)
+        if recovery:
+            session = json.loads((recovery.settings["state_dir"] / "session.json").read_text(encoding="utf-8"))["session_id"]
+            for child in self.controllers.values():
+                atomic_write_json(child.settings["state_dir"] / "session.json", {"session_id": session})
         if any(child.cleaned_on_open for child in self.controllers.values()) and not any(child.recovery_pending for child in self.controllers.values()):
             clear_shared(self.app)
         self.options = self.app / "data/proxybench-ui.json"
@@ -85,19 +90,38 @@ class MultiModeDashboard:
     def login_github(self):
         if self.active():
             raise ValueError("请先停止并保存，再登录或切换 GitHub 账号")
-        if os.name != "nt":
-            raise ValueError("请在终端运行 gh auth login --web，再检查连接")
         if self.github_login_process and self.github_login_process.poll() is None:
-            raise ValueError("GitHub 登录窗口已打开，请完成该窗口中的授权")
+            return {"message": "正在等待浏览器授权，请使用页面显示的一次性验证码"}
         client = CloudController(dict(self.controllers["proxy"].settings))
         if not client.gh:
             raise ValueError("请使用包含 GitHub CLI 的完整安装包")
-        self.github_login_process = subprocess.Popen([client.gh, "auth", "login", "--web", "--hostname", "github.com", "--git-protocol", "https", "--scopes", "repo,workflow"],
-                                                     cwd=self.app, creationflags=subprocess.CREATE_NEW_CONSOLE)
         self.github_status = {**load_destination(self.app, self.controllers["proxy"].settings), "status": "Authenticating", "steps": check_steps(),
-                              "message": "官方登录窗口已打开，等待浏览器授权；完成后自动检查账号和目标仓库"}
-        self.github_status["steps"][0].update(status="running", detail="请在官方登录窗口复制验证码，并在浏览器完成授权")
-        return {"message": "GitHub 官方登录窗口已打开；复制一次性验证码并在浏览器授权，完成后点击检查连接"}
+                              "device": {"code": "", "copied": False}, "message": "正在向 GitHub 官方获取一次性验证码，请稍候"}
+        self.github_status["steps"][0].update(status="running", detail="正在获取一次性验证码")
+        ticket = self.github_status
+        def on_code(process, code, copied):
+            if self.github_status is ticket:
+                ticket.update(device={"code": code, "copied": copied}, message="验证码已就绪；在 GitHub 官方授权页粘贴，授权后本页自动检查连接")
+                ticket["steps"][0].update(detail="请复制页面中的验证码，并在浏览器完成授权")
+        from .github_login import start
+        try:
+            self.github_login_process = start(client, on_code)
+        except OSError:
+            ticket.update(status="Failed", message="无法启动 GitHub 登录，请使用完整安装包")
+            raise ValueError(ticket["message"]) from None
+        return {"message": "正在获取登录验证码，验证码会显示在本页面；无需打开命令窗口"}
+
+    def cancel_login(self):
+        process = self.github_login_process
+        if process and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        self.github_login_process = None
+        self.github_status = {key: value for key, value in self.github_status.items() if key != "device"}
+        self.github_status.update(status="Unverified", message="已取消授权；可以重新获取验证码")
 
     def refresh_core(self, version="latest", *, automatic=True):
         if self.core_thread and self.core_thread.is_alive():
@@ -136,14 +160,18 @@ class MultiModeDashboard:
                 self.github_login_process = None
                 self.check_github({})
             elif exit_code != 0:
+                expired = getattr(self.github_login_process, "device_expired", False)
                 self.github_login_process = None
-                self.github_status.update(status="Failed", message="官方登录未完成；点击登录 GitHub 可以重试，已测 IP 保留")
+                self.github_status.update(status="Failed", message="验证码已过期，正在获取新的授权验证码" if expired else "官方登录未完成或验证码已过期；点击登录 GitHub 获取新验证码，已测 IP 保留")
                 self.github_status["steps"][0].update(status="failed", detail="浏览器授权未完成或登录窗口已取消")
+                self.github_status.pop("device", None)
+                if expired:
+                    self.login_github()
         selected = mode if mode in MODES else self.mode
         value = self.controllers[selected].snapshot()
         active = self.active()
         value.update(measurement_mode=selected, active_mode=active, global_running=active is not None,
-                     github_settings={**load_destination(self.app, self.controllers["proxy"].settings), "connection": self.github_status, "checking": bool(self.github_thread and self.github_thread.is_alive())},
+                     github_settings={**load_destination(self.app, self.controllers["proxy"].settings), "network": network_settings(self.app), "connection": self.github_status, "checking": bool(self.github_thread and self.github_thread.is_alive())},
                      core_versions={**self.core_manager.version_catalog(), "busy": bool(self.core_thread and self.core_thread.is_alive()), "message": self.core_message},
                      modes={mode: {"title": title, "limits": publication_limits(current_rules(self.controllers[mode].settings)),
                                     "cloud": {k: v for k, v in self.controllers[mode].cloud_published.items() if k != "nodes"}}
@@ -155,6 +183,20 @@ class MultiModeDashboard:
             return self._action(action, dict(payload))
 
     def _action(self, action, payload):
+        if action == "save-github-network":
+            if self.active() or self.github_login_process and self.github_login_process.poll() is None:
+                raise ValueError("请先停止测速或取消登录，再修改 GitHub 连接方式")
+            saved = save_network(self.app, payload)
+            self.github_status = {**load_destination(self.app), "status": "Unverified", "message": "连接方式已保存，请检查连接"}
+            return {"saved": True, "network": saved, "message": "已保存；只影响 GitHub 官方连接，不改变测速规则和系统代理"}
+        if action == "refresh-github-code":
+            if self.active():
+                raise ValueError("请先停止测速，再更新登录验证码")
+            self.cancel_login()
+            return self.login_github()
+        if action == "cancel-github-login":
+            self.cancel_login()
+            return {"message": "已取消本次登录"}
         if action == "save-github-settings":
             return self.save_github(payload)
         if action == "check-github":
@@ -215,6 +257,7 @@ class MultiModeDashboard:
         return result
 
     def request_close(self):
+        self.cancel_login()
         for child in self.controllers.values():
             child.request_close()
 

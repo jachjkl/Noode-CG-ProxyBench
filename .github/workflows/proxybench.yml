@@ -23,6 +23,14 @@ on:
         description: 仅诊断云端候选获取，不运行本地测速
         type: boolean
         default: true
+      fetch_id:
+        description: 候选请求标识（失败重试保留同一批全量候选）
+        type: string
+        default: ''
+      initial_full:
+        description: 首次获取两个完整链接和一万个官方候选
+        type: boolean
+        default: false
 permissions: {}
 concurrency:
   group: noode-cg-proxybench
@@ -49,6 +57,8 @@ jobs:
       NOODE_CONTINUATION: ${{ inputs.continuation || 'false' }}
       NOODE_SESSION_ID: ${{ inputs.session_id }}
       NOODE_REUSE_HANDOFF: ${{ inputs.reuse_handoff || 'false' }}
+      NOODE_FETCH_ID: ${{ inputs.fetch_id }}
+      NOODE_INITIAL_FULL: ${{ inputs.initial_full || 'false' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
@@ -71,15 +81,17 @@ jobs:
           echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "pool_sha256=$(sha256sum data/handoff/proxybench-pool.json.gz | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
       - id: encode
+        if: inputs.prepare_only != true
         run: python scripts/proxybench_channel.py encode --kind handoff
       - name: Prepare trusted mirror download metadata
         run: |
-          python -c "import json,os;from pathlib import Path;p=Path(os.environ['RUNNER_TEMP'])/'handoff.json';r=json.loads(Path('data/handoff/proxybench-cloud-health.json').read_text());p.write_text(json.dumps({'repository':os.environ['GITHUB_REPOSITORY'],'ref':'${{ steps.commit.outputs.ref }}','sha256':'${{ steps.commit.outputs.pool_sha256 }}','session_id':r['session_id']}),encoding='utf-8')"
+          python -c "import json,os,shutil;from pathlib import Path;d=Path(os.environ['RUNNER_TEMP'])/'noode-handoff';d.mkdir();r=json.loads(Path('data/handoff/proxybench-cloud-health.json').read_text());(d/'handoff.json').write_text(json.dumps({'repository':os.environ['GITHUB_REPOSITORY'],'ref':'${{ steps.commit.outputs.ref }}','sha256':'${{ steps.commit.outputs.pool_sha256 }}','session_id':r['session_id']}),encoding='utf-8');shutil.copyfile('data/handoff/proxybench-pool.json.gz',d/'proxybench-pool.json.gz')"
       - name: Save trusted mirror download metadata
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: proxybench-handoff-metadata
-          path: ${{ runner.temp }}/handoff.json
+          path: ${{ runner.temp }}/noode-handoff/*
+          if-no-files-found: error
   local-select:
     name: 本地真实代理测速
     needs: cloud-prepare

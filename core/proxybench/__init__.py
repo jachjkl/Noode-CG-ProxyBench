@@ -1,3 +1,3 @@
 """Proxy website benchmarking and exclusive original TCPing or TLS probes."""
 
-VERSION = "1.3.1"
+VERSION = "1.3.2"

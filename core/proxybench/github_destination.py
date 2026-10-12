@@ -64,13 +64,17 @@ def check_destination(client, target: dict, on_step=None) -> dict:
         emit("account", "running", "正在核对 GitHub 官方登录授权")
         try:
             actor = client.command(["api", "user", "--jq", ".login"], timeout=8).strip()
-        except Exception:
+        except Exception as error:
+            if getattr(error, "category", "") == "network":
+                raise ValueError(str(error)) from None
             raise ValueError("尚未登录 GitHub 或授权已失效；点击登录 GitHub 后重新检查") from None
         emit("account", "completed", f"已登录：{actor}", account=actor)
         emit("repository", "running", "正在读取目标仓库并核对所有者与写权限")
         try:
             repository = client.command(["api", f"repos/{target['repository']}"], timeout=8, as_json=True)
-        except Exception:
+        except Exception as error:
+            if getattr(error, "category", "") == "network":
+                raise ValueError(str(error)) from None
             raise ValueError("无法读取目标仓库：请检查账号/仓库名，以及该账号的访问权限") from None
         canonical = destination(repository.get("full_name", ""), target["branch"])
         if repository.get("archived") or repository.get("disabled"):
@@ -84,7 +88,9 @@ def check_destination(client, target: dict, on_step=None) -> dict:
         emit("branch", "running", f"正在检查 {target['branch']} 分支")
         try:
             client.command(["api", f"repos/{canonical['repository']}/branches/{quote(target['branch'], safe='')}"], timeout=8, as_json=True)
-        except Exception:
+        except Exception as error:
+            if getattr(error, "category", "") == "network":
+                raise ValueError(str(error)) from None
             raise ValueError("目标分支不存在，请在整体设置中修改分支") from None
         emit("branch", "completed", f"{target['branch']} 分支可用")
         for key, workflow in (("candidates", "proxybench.yml"), ("publication", "proxybench-publish.yml")):
@@ -94,7 +100,9 @@ def check_destination(client, target: dict, on_step=None) -> dict:
                 if state.get("state") != "active":
                     raise ValueError
                 client.command(["api", f"repos/{canonical['repository']}/contents/.github/workflows/{workflow}?ref={quote(target['branch'], safe='')}"], timeout=8, as_json=True)
-            except Exception:
+            except Exception as error:
+                if getattr(error, "category", "") == "network":
+                    raise ValueError(str(error)) from None
                 raise ValueError(f"云端自动化尚未就绪：请按引导上传完整源码并启用 {workflow}") from None
             emit(key, "completed", "工作流已启用，目标分支源码完整")
         renamed = canonical["repository"].casefold() != target["repository"].casefold()

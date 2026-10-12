@@ -17,6 +17,7 @@ from scripts.sync_cloud_handoff import download, sources
 from .cloud import CloudController, CloudError
 from .cloud_network import vpn_environment
 from .events import EventLog, chinese
+from .handoff import validate as validate_handoff
 from .pipeline import Pipeline
 from .profile import ProxyProfile, discover_profiles, import_discovered, refresh_existing, safe_error
 from .publication_policy import PolicyChanged
@@ -59,7 +60,7 @@ class DesktopCloudController(CloudController):
                     time.sleep(0.2)
 
     def dispatch_named(self, workflow: str, fields: dict) -> None:
-        request = secrets.token_hex(16)
+        request = fields.get("fetch_id") or secrets.token_hex(16)
         self.run_id = None
         prior_path = self.settings["state_dir"] / "live.json"
         prior = json.loads(prior_path.read_text(encoding="utf-8")) if prior_path.exists() else {}
@@ -71,7 +72,21 @@ class DesktopCloudController(CloudController):
         args = ["workflow", "run", workflow, "--repo", self.repository, "--ref", self.branch, "-f", f"dispatch_id={request}"]
         for key, value in fields.items():
             args.extend(["-f", f"{key}={value}"])
-        self.command(args)
+        listing = ["run", "list", "--repo", self.repository, "--workflow", workflow, "--limit", "30",
+                   "--json", "databaseId,displayTitle,event,status,conclusion"]
+        if fields.get("fetch_id"):
+            existing = self.command(listing, as_json=True)
+            current = next((row for row in existing if request in row.get("displayTitle", "") and
+                            row.get("event") == "workflow_dispatch" and (row.get("status") != "completed" or row.get("conclusion") == "success")), None)
+            if current:
+                self.run_id = current["databaseId"]
+                return
+        try:
+            self.command(args)
+        except CloudError as error:
+            if getattr(error, "category", "") != "network":
+                raise
+            self.update(monitor_warning="请求确认暂时失败，正在核对云端是否已收到；不会重复创建候选轮次")
         for _ in range(60):
             self.control.checkpoint()
             runs = self.command(["run", "list", "--repo", self.repository, "--workflow", workflow, "--limit", "20",
@@ -84,7 +99,17 @@ class DesktopCloudController(CloudController):
         raise CloudError("暂时无法找到云端任务，已保留候选和断点")
 
     def fetch_handoff(self, session_id: str, reuse: bool) -> None:
-        self.dispatch_named("proxybench.yml", {"session_id": session_id, "reuse_handoff": str(reuse).lower(), "prepare_only": "true"})
+        marker = self.root / "data/pending-cloud-fetch.json"
+        pending = json.loads(marker.read_text(encoding="utf-8")) if marker.exists() else {}
+        if pending.get("session_id") != session_id:
+            shared = self.root / "data/window-candidates.json.gz"
+            import gzip
+            previous = json.loads(gzip.decompress(shared.read_bytes())) if shared.exists() else {}
+            pending = {"session_id": session_id, "fetch_id": secrets.token_hex(16),
+                       "initial_full": previous.get("report", {}).get("session_id") != session_id}
+            atomic_write_json(marker, pending)
+        self.dispatch_named("proxybench.yml", {"session_id": session_id, "reuse_handoff": str(reuse).lower(), "prepare_only": "true",
+                                              "fetch_id": pending["fetch_id"], "initial_full": str(pending["initial_full"]).lower()})
         run = self.watch()
         if run.get("conclusion") != "success":
             raise CloudError("云端候选获取未完成，已保留本机候选和断点")
@@ -95,18 +120,27 @@ class DesktopCloudController(CloudController):
         if metadata.get("repository") != self.repository or metadata.get("session_id") != session_id or not re.fullmatch(r"[a-f0-9]{40}", metadata.get("ref", "")):
             raise CloudError("云端候选元数据不对应当前会话")
         self.update(status="Downloading", stage="通过多镜像下载并校验候选 IP", handoff_ready=True)
+        downloaded = dest / "mirror-pool.json.gz"
         try:
-            download(self.root / "data/handoff/proxybench-pool.json.gz", metadata["sha256"],
+            download(downloaded, metadata["sha256"],
                      sources(self.repository, metadata["ref"], "data/handoff/proxybench-pool.json.gz"), timeout=8, checkpoint=self.control.checkpoint)
         except RuntimeError:
-            raise CloudError("所有候选镜像暂时不可用，已保留旧候选；可继续重试") from None
+            artifact = dest / "proxybench-pool.json.gz"
+            if not artifact.exists() or hashlib.sha256(artifact.read_bytes()).hexdigest() != metadata["sha256"]:
+                raise CloudError("候选镜像和官方备用文件均不可用，已保留同一请求；可继续重试") from None
+            atomic_write_bytes(downloaded, artifact.read_bytes())
+            self.update(monitor_warning="镜像暂时不可用，已从 GitHub 官方任务备用文件完整下载并校验候选")
         # The checked pool already contains its source report and incumbent nodes.
         import gzip
-        payload = json.loads(gzip.decompress((self.root / "data/handoff/proxybench-pool.json.gz").read_bytes()))
-        if payload["report"].get("session_id") != session_id:
-            raise CloudError("候选文件会话不匹配")
+        payload = json.loads(gzip.decompress(downloaded.read_bytes()))
+        validate_handoff(payload, **{key: pending[key] for key in ("session_id", "fetch_id", "initial_full")})
+        atomic_write_bytes(self.root / "data/handoff/proxybench-pool.json.gz", downloaded.read_bytes())
         atomic_write_json(self.root / "data/handoff/proxybench-cloud-health.json", payload["report"])
         accumulate(self.settings)
+        marker.unlink(missing_ok=True)
+        counts = payload["report"].get("fixed_sources", {})
+        EventLog(self.root, self.settings.get("measurement_mode", "proxy")).append(
+            f"候选完整校验通过：链接一 {counts.get('fixed-source-a', 0)} 个、链接二 {counts.get('fixed-source-b', 0)} 个、官方 10,000 个；本轮去重后 {len(payload['pool'])} 个")
 
     def local_select(self, *, publish_only: bool = False) -> dict:
         self.update(status="Local", stage="本地 TCP／TLS 直连测速" if self.settings.get("measurement_mode") == "tcp_tls" else "本地真实代理测速", handoff_ready=True, download_ready=True, local_detached=True,
@@ -255,12 +289,12 @@ class DesktopCloudController(CloudController):
                 if current.get("report", {}).get("session_id") == session["session_id"]:
                     accumulate(self.settings)
                     resumable = True
-            if mode == "resume" and not state and (self.root / "data/handoff/proxybench-pool.json.gz").exists():
+            if mode == "resume" and not state and not (self.root / "data/pending-cloud-fetch.json").exists() and shared_handoff.exists():
                 import gzip
                 saved = json.loads(gzip.decompress((self.root / "data/handoff/proxybench-pool.json.gz").read_bytes()))
-                session["session_id"] = saved["report"]["session_id"]
-                atomic_write_json(session_path, session)
-                resumable = True
+                if saved["report"].get("session_id") == session["session_id"]:
+                    accumulate(self.settings)
+                    resumable = True
             limit = self.settings["max_cycles"]
             if resumable and limit:
                 limit = max(1, limit - int(state.get("cycle", 1)) + 1)

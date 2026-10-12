@@ -93,3 +93,4 @@ def clear_shared(app: Path) -> None:
         for name in ("proxybench-pool.json.gz", "proxybench-cloud-health.json", "proxybench-session-history.json.gz", "proxybench-attempted.json.gz"):
             (handoff / name).unlink(missing_ok=True)
     (app / "data/window-candidates.json.gz").unlink(missing_ok=True)
+    (app / "data/pending-cloud-fetch.json").unlink(missing_ok=True)

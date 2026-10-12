@@ -80,7 +80,8 @@ def main(argv: list[str] | None = None) -> int:
         elif command == "prepare-handoff":
             import os
             report = prepare(settings, os.getenv("NOODE_CONTINUATION", "false").lower() == "true",
-                             os.getenv("NOODE_SESSION_ID", ""), os.getenv("NOODE_REUSE_HANDOFF", "false").lower() == "true")
+                             os.getenv("NOODE_SESSION_ID", ""), os.getenv("NOODE_REUSE_HANDOFF", "false").lower() == "true",
+                             fetch_id=os.getenv("NOODE_FETCH_ID", ""), initial_full=os.getenv("NOODE_INITIAL_FULL", "false").lower() == "true")
         elif command == "local-select":
             report = Pipeline(settings).run(resume=True, handoff=True)
         elif command == "validate-runtime":

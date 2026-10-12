@@ -28,8 +28,13 @@ from .state import Control, RunLock, Stopped, Store
 PROXY_POLICY = "proxy-v12-single-round-bounded"
 
 
-def prepare(settings: dict, continuation: bool = False, session_id: str = "", reuse: bool = False) -> dict:
+def prepare(settings: dict, continuation: bool = False, session_id: str = "", reuse: bool = False, *, fetch_id: str = "", initial_full: bool = False) -> dict:
     destination = settings["root"] / "data/handoff/proxybench-pool.json.gz"
+    if fetch_id and destination.exists():
+        saved = json.loads(gzip.decompress(destination.read_bytes()))["report"]
+        if saved.get("session_id") == session_id and saved.get("fetch_id") == fetch_id:
+            atomic_write_json(destination.with_name("proxybench-cloud-health.json"), saved)
+            return saved
     if reuse:
         payload = json.loads(gzip.decompress(destination.read_bytes()))
         if session_id and payload["report"].get("session_id") != session_id:
@@ -41,7 +46,7 @@ def prepare(settings: dict, continuation: bool = False, session_id: str = "", re
         session_id = history.get("session_id", "") if continuation else secrets.token_hex(16)
     if not session_id:
         session_id = secrets.token_hex(16)
-    if history.get("session_id") != session_id:
+    if history.get("session_id") != session_id or initial_full:
         history = {"session_id": session_id, "cycle": 0, "ips": []}
     excluded = set(history["ips"])
     prior_path = settings["root"] / "data/handoff/proxybench-attempted.json.gz"
@@ -49,7 +54,8 @@ def prepare(settings: dict, continuation: bool = False, session_id: str = "", re
         excluded.update(json.loads(gzip.decompress(prior_path.read_bytes())))
     # Cloud does not need or receive the local Profile. The local stage normalizes port from the Profile.
     pool, report = build(settings, 443, excluded, include_fixed=history["cycle"] == 0)
-    report.update(continuation=bool(history["cycle"]), session_id=session_id, cycle=history["cycle"] + 1)
+    report.update(continuation=bool(history["cycle"]), session_id=session_id, cycle=history["cycle"] + 1, fetch_id=fetch_id)
+    report["first_round_sources"] = report.get("fixed_sources", {}) if not history["cycle"] else history.get("first_round_sources", {})
     incumbents_path = settings["output_dir"] / "nodes.json"
     incumbents = json.loads(incumbents_path.read_text(encoding="utf-8")) if incumbents_path.exists() else []
     atomic_write_bytes(destination, gzip.compress(json.dumps({"schema": 2, "pool": pool, "report": report,
@@ -57,7 +63,7 @@ def prepare(settings: dict, continuation: bool = False, session_id: str = "", re
                                                              "incumbents_by_mode": {mode: json.loads((settings["root"] / folder / "nodes.json").read_text(encoding="utf-8"))
                                                                                     if (settings["root"] / folder / "nodes.json").exists() else []
                                                                                     for mode, folder in OUTPUTS.items()}}).encode(), mtime=0))
-    history.update(cycle=report["cycle"], ips=sorted(excluded | {item["ip"] for item in pool}))
+    history.update(cycle=report["cycle"], ips=sorted(excluded | {item["ip"] for item in pool}), first_round_sources=report["first_round_sources"])
     atomic_write_bytes(history_path, gzip.compress(json.dumps(history).encode(), mtime=0))
     atomic_write_json(destination.with_name("proxybench-cloud-health.json"), report)
     return report

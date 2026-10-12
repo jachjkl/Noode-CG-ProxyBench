@@ -25,7 +25,9 @@ REPOSITORY = DEFAULT_REPOSITORY
 
 
 class CloudError(ValueError):
-    pass
+    def __init__(self, message, *, category="other"):
+        super().__init__(message)
+        self.category = category
 
 
 class CloudController:
@@ -61,11 +63,19 @@ class CloudController:
             actor = self.command(["api", "user", "--jq", ".login"], timeout=8).strip()
             if actor.casefold() != self.repository.split("/")[0].casefold():
                 raise CloudError("当前 GitHub 登录账号与目标仓库所有者不一致；请在整体设置中登录正确账号，已测 IP 已保留")
-        result = subprocess.run([self.gh, *args], capture_output=True, encoding="utf-8", errors="replace", timeout=timeout,
-                                env=cloud_environment(),
-                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        try:
+            result = subprocess.run([self.gh, *args], capture_output=True, encoding="utf-8", errors="replace", timeout=timeout,
+                                    env=cloud_environment(root=self.root),
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except subprocess.TimeoutExpired:
+            raise CloudError("GitHub 官方连接超时；可在整体设置手动开启本机网络代理后重试，当前结果已保留", category="network") from None
         if result.returncode:
-            raise CloudError("GitHub 连接或账户授权失败")
+            diagnostic = (result.stderr or "").lower()
+            if any(word in diagnostic for word in ("http 401", "bad credentials", "not logged", "gh auth login", "authentication token")):
+                raise CloudError("GitHub 尚未登录或授权已失效，请点击登录 GitHub", category="auth")
+            if any(word in diagnostic for word in ("timeout", "timed out", "connection", "dial tcp", "no such host", "tls handshake", "unexpected eof", "network", "proxyconnect")):
+                raise CloudError("GitHub 官方网络连接失败；可在整体设置手动开启本机网络代理后重试", category="network")
+            raise CloudError("GitHub 请求未成功，请检查仓库地址、工作流和账号权限", category="request")
         return json.loads(result.stdout) if as_json and result.stdout.strip() else result.stdout
 
     def prepare_runner(self) -> None:

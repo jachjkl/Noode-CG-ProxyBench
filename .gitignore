@@ -19,6 +19,8 @@ data/tcpbench-parallelism-v2.json
 # Per-machine dashboard settings and transient cycle state.
 data/local-rules.json
 data/local-options.json
+data/github-network.json
+data/pending-cloud-fetch.json
 data/handoff/local-live-results.json.gz
 data/handoff/dashboard-continue-request.json
 data/handoff/stop-after-current.json

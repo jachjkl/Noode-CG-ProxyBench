@@ -73,7 +73,9 @@ class BenchDashboard:
             self.recovery_pending = bool(failed or marker.get("last_exit") == "error" or marker.get("recovery_pending") or prior.get("status") in {"Running", "Paused"})
             self.preserve_on_close = self.recovery_pending
         atomic_write_json(self.lifecycle_path, {"last_exit": "open", "recovery_pending": self.recovery_pending})
-        atomic_write_json(self.settings["state_dir"] / "session.json", {"session_id": session_id or secrets.token_hex(16)})
+        session_path = self.settings["state_dir"] / "session.json"
+        previous_session = self.read_cached(session_path, default={}).get("session_id") if self.recovery_pending else None
+        atomic_write_json(session_path, {"session_id": previous_session or session_id or secrets.token_hex(16)})
 
     def refresh_cloud(self) -> None:
         if self.closing:
