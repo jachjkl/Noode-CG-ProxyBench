@@ -7,8 +7,10 @@ import io
 import json
 import re
 import secrets
+import tempfile
 import time
 import zipfile
+from pathlib import Path
 
 from core.io_utils import atomic_write_bytes, atomic_write_json
 from scripts.proxybench_channel import pack, result_prefix, validate_result_files
@@ -113,11 +115,21 @@ class DesktopCloudController(CloudController):
         run = self.watch()
         if run.get("conclusion") != "success":
             raise CloudError("云端候选获取未完成，已保留本机候选和断点")
-        dest = self.root / "runtime/cloud-handoff" / str(self.run_id)
-        dest.mkdir(parents=True, exist_ok=True)
+        cache = (self.root / "runtime/cloud-handoff").resolve()
+        if self.root.resolve() not in cache.parents:
+            raise CloudError("候选临时目录不属于当前软件，未下载")
+        cache.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=f"{self.run_id}-", dir=cache) as directory:
+            payload = self.receive_handoff(Path(directory), pending)
+        marker.unlink(missing_ok=True)
+        counts = payload["report"].get("fixed_sources", {})
+        EventLog(self.root, self.settings.get("measurement_mode", "proxy")).append(
+            f"候选完整校验通过：链接一 {counts.get('fixed-source-a', 0)} 个、链接二 {counts.get('fixed-source-b', 0)} 个、官方 10,000 个；本轮去重后 {len(payload['pool'])} 个")
+
+    def receive_handoff(self, dest: Path, pending: dict) -> dict:
         self.command(["run", "download", str(self.run_id), "--repo", self.repository, "--name", "proxybench-handoff-metadata", "--dir", str(dest)], timeout=60)
         metadata = json.loads((dest / "handoff.json").read_text(encoding="utf-8"))
-        if metadata.get("repository") != self.repository or metadata.get("session_id") != session_id or not re.fullmatch(r"[a-f0-9]{40}", metadata.get("ref", "")):
+        if metadata.get("repository") != self.repository or metadata.get("session_id") != pending["session_id"] or not re.fullmatch(r"[a-f0-9]{40}", metadata.get("ref", "")):
             raise CloudError("云端候选元数据不对应当前会话")
         self.update(status="Downloading", stage="通过多镜像下载并校验候选 IP", handoff_ready=True)
         downloaded = dest / "mirror-pool.json.gz"
@@ -137,10 +149,7 @@ class DesktopCloudController(CloudController):
         atomic_write_bytes(self.root / "data/handoff/proxybench-pool.json.gz", downloaded.read_bytes())
         atomic_write_json(self.root / "data/handoff/proxybench-cloud-health.json", payload["report"])
         accumulate(self.settings)
-        marker.unlink(missing_ok=True)
-        counts = payload["report"].get("fixed_sources", {})
-        EventLog(self.root, self.settings.get("measurement_mode", "proxy")).append(
-            f"候选完整校验通过：链接一 {counts.get('fixed-source-a', 0)} 个、链接二 {counts.get('fixed-source-b', 0)} 个、官方 10,000 个；本轮去重后 {len(payload['pool'])} 个")
+        return payload
 
     def local_select(self, *, publish_only: bool = False) -> dict:
         self.update(status="Local", stage="本地 TCP／TLS 直连测速" if self.settings.get("measurement_mode") == "tcp_tls" else "本地真实代理测速", handoff_ready=True, download_ready=True, local_detached=True,

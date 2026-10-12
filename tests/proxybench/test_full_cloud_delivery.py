@@ -125,11 +125,14 @@ class FullCloudDeliveryTests(unittest.TestCase):
             content = (root / "data/handoff/proxybench-pool.json.gz").read_bytes()
             (root / "data/handoff/proxybench-pool.json.gz").unlink()
             controller.run_id = 7
-            dest = root / "runtime/cloud-handoff/7"
-            dest.mkdir(parents=True)
-            atomic_write_json(dest / "handoff.json", {"repository": controller.repository, "ref": "a" * 40, "session_id": "window", "sha256": hashlib.sha256(content).hexdigest()})
-            atomic_write_bytes(dest / "proxybench-pool.json.gz", content)
-            controller.command = Mock()
+            directories = []
+            def official_artifact(args, **kwargs):
+                dest = Path(args[args.index("--dir") + 1])
+                self.assertFalse((dest / "handoff.json").exists(), "official CLI refuses to overwrite previous downloads")
+                directories.append(dest)
+                atomic_write_json(dest / "handoff.json", {"repository": controller.repository, "ref": "a" * 40, "session_id": "window", "sha256": hashlib.sha256(content).hexdigest()})
+                atomic_write_bytes(dest / "proxybench-pool.json.gz", content)
+            controller.command = Mock(side_effect=official_artifact)
             controller.watch.return_value = {"conclusion": "success"}
             with patch("core.proxybench.desktop_cloud.download", side_effect=RuntimeError("mirrors unavailable")):
                 controller.fetch_handoff("window", False)
@@ -138,6 +141,12 @@ class FullCloudDeliveryTests(unittest.TestCase):
             self.assertEqual(len(self.payload(root)["pool"]), 10003)
             self.assertFalse(marker.exists())
             self.assertEqual((root / "data/handoff/proxybench-pool.json.gz").read_bytes(), content)
+            atomic_write_json(marker, pending)
+            with patch("core.proxybench.desktop_cloud.download", side_effect=RuntimeError("mirrors unavailable")):
+                controller.fetch_handoff("window", False)
+            self.assertNotEqual(directories[0], directories[1])
+            self.assertTrue(all(not directory.exists() for directory in directories))
+            self.assertFalse(marker.exists())
 
     def test_dispatch_with_same_fetch_id_finds_existing_success_without_extra_post(self):
         with tempfile.TemporaryDirectory() as directory:
