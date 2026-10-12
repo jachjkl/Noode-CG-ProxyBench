@@ -1,17 +1,17 @@
 {
-  "seed": "84cdf7298e376e9a707262a514fe9b41",
+  "seed": "cd46f9de33e6fa363a0bab2f8e85b8be",
   "fixed_sources": {
-    "fixed-source-a": 11093,
-    "fixed-source-b": 186
+    "fixed-source-a": 16081,
+    "fixed-source-b": 199
   },
   "fixed_fetched_this_round": true,
-  "fixed_source_count": 11238,
+  "fixed_source_count": 16225,
   "excluded_ip_count": 0,
   "cloudflare_official_count": 10000,
   "jp_supplement_count": 19,
   "authorized_proxy_count": 0,
-  "candidate_total": 21257,
-  "unique_candidate_count": 21257,
+  "candidate_total": 26243,
+  "unique_candidate_count": 26243,
   "official_ipv4_ranges": [
     "173.245.48.0/20",
     "103.21.244.0/22",
@@ -35,28 +35,93 @@
     "gslege-jp-hint": false
   },
   "continuation": false,
-  "session_id": "bbd79e5e23790f6e9685cc82a09072b5",
+  "session_id": "3c7645a8f72ef1b63700d1d0c2def5de",
   "cycle": 1,
+  "fetch_id": "0d696e3fee367fa9007848c92109aeec",
+  "first_round_sources": {
+    "fixed-source-a": 16081,
+    "fixed-source-b": 199
+  },
   "status": "ok",
   "publication_limits": {
-    "general": 100,
-    "japan": 10
+    "kind": "regional-v1",
+    "total": 100,
+    "regions": {
+      "JP": 10,
+      "HK": 20,
+      "SG": 20
+    },
+    "append": {
+      "JP": 10
+    },
+    "max_rounds": 3
+  },
+  "publication_preview": {
+    "qualified": 413,
+    "available": 295,
+    "selected": 100,
+    "total": 100,
+    "by_region": {
+      "JP": 109,
+      "XX": 7,
+      "SG": 39,
+      "NL": 58,
+      "US": 116,
+      "DE": 50,
+      "SE": 5,
+      "KR": 6,
+      "FI": 2,
+      "GB": 5,
+      "FR": 13,
+      "AT": 1,
+      "AU": 1,
+      "TW": 1
+    },
+    "selected_by_region": {
+      "SG": 20,
+      "KR": 4,
+      "JP": 10,
+      "US": 46,
+      "TW": 1,
+      "XX": 1,
+      "DE": 10,
+      "FR": 5,
+      "NL": 3
+    }
+  },
+  "measurement_rules": {
+    "batch_size": 100,
+    "round_count": 1,
+    "max_proxy_average_latency_ms": 300.0,
+    "max_proxy_loss_percent": 0.0,
+    "min_proxy_speed_mbps": 3.01,
+    "download_attempts": 1,
+    "download_bytes": 524288,
+    "minimum_completion_ratio": 0.95,
+    "maximum_download_seconds": 5.0,
+    "request_timeout_seconds": 2.0,
+    "download_timeout_seconds": 5.0,
+    "delay_concurrency": 100,
+    "speed_concurrency": 4,
+    "publish_count": 100,
+    "jp_publish_count": 10,
+    "adaptive_concurrency": 1
   },
   "measurement_mode": "proxy",
-  "manual_publication": false,
-  "tested_count": 21257,
-  "qualified_count": 2493,
-  "jp_qualified_count": 97,
+  "manual_publication": true,
+  "tested_count": 8745,
+  "qualified_count": 406,
+  "jp_qualified_count": 109,
   "mihomo_version": "v1.19.32",
-  "batch_total": 213,
-  "batch_completed": 213,
-  "run_id": "296398a08d3c3630de9b71e93732e408",
+  "batch_total": 263,
+  "batch_completed": 88,
+  "run_id": "cea2d1328e0dbe43cd6b4b88714dc93f",
   "previous_general_competitors": 100,
   "publish_gate_passed": true,
   "published": true,
   "needs_more": false,
   "quota_complete": true,
-  "general_final_count": 100,
+  "general_final_count": 90,
   "jp_final_count": 10,
-  "unique_final_count": 110
+  "unique_final_count": 100
 }
