@@ -1,17 +1,17 @@
 {
-  "seed": "b165acaad067af180b45befba1368287",
+  "seed": "f2afe660dcc11e909719c97466e6d907",
   "fixed_sources": {
     "fixed-source-a": 10408,
-    "fixed-source-b": 47
+    "fixed-source-b": 44
   },
   "fixed_fetched_this_round": true,
-  "fixed_source_count": 10420,
+  "fixed_source_count": 10418,
   "excluded_ip_count": 0,
   "cloudflare_official_count": 10000,
   "jp_supplement_count": 19,
   "authorized_proxy_count": 0,
   "candidate_total": 23423,
-  "unique_candidate_count": 20439,
+  "unique_candidate_count": 20436,
   "official_ipv4_ranges": [
     "173.245.48.0/20",
     "103.21.244.0/22",
@@ -35,11 +35,11 @@
     "gslege-jp-hint": false
   },
   "continuation": false,
-  "session_id": "d82b2bb710d07062093c413011dd130d",
+  "session_id": "6e220b679846d60949a41d990c799037",
   "cycle": 1,
-  "fetch_id": "dea9c0473a5c3a7ef95ae0f9e526e686",
+  "fetch_id": "7e1016fdc36b4034ed2184eb95bba58b",
   "first_round_sources": {
     "fixed-source-a": 10408,
-    "fixed-source-b": 47
+    "fixed-source-b": 44
   }
 }
