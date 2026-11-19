@@ -1,9 +1,9 @@
 {
-  "seed": "672a6721dcde8118d4593029f66aeea9",
+  "seed": "cf0dfbe76160c2c7b6f2c396579a3bba",
   "fixed_sources": {},
   "fixed_fetched_this_round": false,
   "fixed_source_count": 0,
-  "excluded_ip_count": 30551,
+  "excluded_ip_count": 40551,
   "cloudflare_official_count": 10000,
   "jp_supplement_count": 19,
   "authorized_proxy_count": 0,
@@ -33,8 +33,8 @@
   },
   "continuation": true,
   "session_id": "fc9d4bf9e03e8eb97c448f1cdd67cc88",
-  "cycle": 2,
-  "fetch_id": "936747384c8f3ff96ac6a93181435b5e",
+  "cycle": 3,
+  "fetch_id": "88a53e547b5b91c93eaa415849cb1ac0",
   "first_round_sources": {
     "fixed-source-a": 9680,
     "fixed-source-b": 45
