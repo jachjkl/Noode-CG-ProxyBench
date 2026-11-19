@@ -1,13 +1,13 @@
 {
-  "seed": "cf0dfbe76160c2c7b6f2c396579a3bba",
+  "seed": "a720f8b9ce508112a7b66e6a440fd9e3",
   "fixed_sources": {},
   "fixed_fetched_this_round": false,
   "fixed_source_count": 0,
-  "excluded_ip_count": 40551,
+  "excluded_ip_count": 49702,
   "cloudflare_official_count": 10000,
   "jp_supplement_count": 19,
   "authorized_proxy_count": 0,
-  "candidate_total": 39730,
+  "candidate_total": 29649,
   "unique_candidate_count": 10000,
   "official_ipv4_ranges": [
     "173.245.48.0/20",
@@ -32,14 +32,14 @@
     "gslege-jp-hint": false
   },
   "continuation": true,
-  "session_id": "fc9d4bf9e03e8eb97c448f1cdd67cc88",
-  "cycle": 3,
-  "fetch_id": "88a53e547b5b91c93eaa415849cb1ac0",
+  "session_id": "93ec6ea3ba15a939670e4480da31e709",
+  "cycle": 2,
+  "fetch_id": "4ae4125d7b6826a4b223f5d0be1f0944",
   "first_round_sources": {
-    "fixed-source-a": 9680,
+    "fixed-source-a": 9599,
     "fixed-source-b": 45
   },
-  "status": "partial",
+  "status": "ok",
   "publication_limits": {
     "kind": "regional-v1",
     "total": 300,
@@ -52,32 +52,34 @@
     "max_rounds": 3
   },
   "publication_preview": {
-    "qualified": 898,
-    "available": 174,
-    "selected": 174,
+    "qualified": 1482,
+    "available": 663,
+    "selected": 300,
     "total": 300,
     "by_region": {
-      "JP": 16,
-      "HK": 718,
+      "JP": 15,
+      "US": 620,
+      "HK": 814,
+      "NL": 4,
+      "FR": 4,
+      "XX": 6,
       "SG": 1,
-      "US": 140,
-      "IN": 1,
       "RU": 1,
-      "DE": 9,
-      "NL": 2,
-      "XX": 9,
-      "AT": 1
+      "IN": 1,
+      "DE": 15,
+      "GB": 1
     },
     "selected_by_region": {
-      "US": 140,
-      "SG": 1,
+      "US": 267,
       "JP": 10,
+      "SG": 1,
+      "DE": 12,
       "IN": 1,
-      "DE": 9,
+      "XX": 3,
       "RU": 1,
-      "XX": 9,
-      "NL": 2,
-      "AT": 1
+      "NL": 1,
+      "GB": 1,
+      "FR": 3
     }
   },
   "measurement_rules": {
@@ -104,19 +106,19 @@
   },
   "measurement_mode": "tcp_tls",
   "manual_publication": true,
-  "tested_count": 40492,
-  "qualified_count": 898,
-  "jp_qualified_count": 16,
+  "tested_count": 28560,
+  "qualified_count": 1482,
+  "jp_qualified_count": 15,
   "mihomo_version": "TCPing／TLS 二选一直连引擎",
-  "batch_total": 398,
-  "batch_completed": 405,
-  "run_id": "ba2846a2e9166d027c9fa3e0e64d298c",
-  "previous_general_competitors": 300,
+  "batch_total": 297,
+  "batch_completed": 286,
+  "run_id": "673607c6e4787e3cbfc4378a0819ef5e",
+  "previous_general_competitors": 174,
   "publish_gate_passed": true,
   "published": true,
   "needs_more": false,
-  "quota_complete": false,
-  "general_final_count": 174,
+  "quota_complete": true,
+  "general_final_count": 300,
   "jp_final_count": 0,
-  "unique_final_count": 174
+  "unique_final_count": 300
 }
